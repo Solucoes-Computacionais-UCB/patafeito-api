@@ -4,9 +4,22 @@ API REST do Patafeito, construída com Express, TypeScript, PostgreSQL e Drizzle
 
 ## Primeiros passos
 
-1. Copie `.env.example` para `.env` e informe as credenciais locais.
-2. Execute `npm install`.
-3. Gere/aplique as migrações: `npm run db:generate` e `npm run db:migrate`.
-4. Inicie em desenvolvimento: `npm run dev`.
+1. Inicie o PostgreSQL local: `docker compose up -d`.
+2. Opcionalmente, copie `.env.example` para `.env`. Sem esse arquivo, o ambiente de desenvolvimento usa o PostgreSQL Docker padrão (`postgres://postgres:postgres@localhost:5432/patafeito`) e segredos JWT locais.
+3. Execute `npm install`.
+4. Aplique as migrações: `npm run db:migrate`.
+5. Inicie em desenvolvimento: `npm run dev`.
 
-A API é exposta em `/api/v1`. Nesta fundação estão disponíveis healthcheck, cadastro/login/refresh e criação/consulta do pet inicial.
+Para parar o banco, use `docker compose down`. Os dados permanecem no volume `patafeito_postgres_data`; para removê-los, use `docker compose down -v`.
+
+A API é exposta em `/api/v1`. Estão disponíveis healthcheck/readiness, cadastro/login/refresh/logout, pet inicial e tarefas com recompensa idempotente.
+
+## Qualidade e testes
+
+- `npm run lint`, `npm run typecheck` e `npm test` executam as verificações locais.
+- `npm run test:integration` requer `TEST_DATABASE_URL` apontando para um PostgreSQL **exclusivo de testes**, já migrado. A suíte limpa suas tabelas.
+- O contrato HTTP está em [`docs/openapi.yaml`](docs/openapi.yaml).
+
+Refresh tokens são rotativos, persistidos com hash Argon2id e revogáveis por `POST /api/v1/auth/logout`.
+
+> Em produção, defina `NODE_ENV=production`, `DATABASE_URL`, `JWT_ACCESS_SECRET` e `JWT_REFRESH_SECRET`; a API recusa os valores locais padrão.

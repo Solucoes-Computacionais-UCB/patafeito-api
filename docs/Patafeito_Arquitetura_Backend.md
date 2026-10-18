@@ -2,7 +2,7 @@
 
 Documento técnico de arquitetura • versão 1.1 • 15/10/2026
 
-Status: proposta arquitetural para validação pela equipe. Base: Roteiro do Projeto de Desenvolvimento de Solução Computacional (43 páginas).
+Status: arquitetura-alvo; Fases 1 e 2 implementadas para o núcleo atual. Base: Roteiro do Projeto de Desenvolvimento de Solução Computacional (43 páginas).
 
 Convenção: \[BASE\] = previsto no roteiro; \[PROPOSTA\] = detalhamento técnico recomendado; \[DECIDIR\] = item em aberto.
 
@@ -338,11 +338,11 @@ Meta de cobertura de domínio/serviços de pelo menos 80% está no RNF011. Aceit
 
 ## 10. Implantação e plano de entrega
 
-- Fase 0 — definir regras incompletas e políticas de offline/iOS; alinhar contrato e entidades.
+- Fase 0 — definir regras incompletas e políticas de offline/iOS; alinhar contrato e entidades. **Parcial:** regras econômicas e sync ainda aguardam decisão.
 
-- Fase 1 — fundação: repositório, CI, PostgreSQL, **Drizzle ORM/Kit, schema e migrações versionadas**, auth, healthchecks, OpenAPI.
+- Fase 1 — fundação: repositório, CI, PostgreSQL, **Drizzle ORM/Kit, schema e migrações versionadas**, auth, healthchecks, OpenAPI. **Concluída:** CI executa lint, typecheck, migrações e testes contra PostgreSQL; há `/health`, `/ready`, `docs/openapi.yaml` e refresh token rotativo/revogável.
 
-- Fase 2 — tarefas, pet, regras XP, ledger, transações e testes.
+- Fase 2 — tarefas, pet, regras XP, ledger, transações e testes. **Concluída para o escopo definido:** CRUD de tarefas, RN01, ledger, transação de conclusão, idempotência persistida, progressão de nível e testes unitários/integração.
 
 - Fase 3 — sessões de foco, loja, inventário, notificações.
 
@@ -353,6 +353,8 @@ Meta de cobertura de domínio/serviços de pelo menos 80% está no RNF011. Aceit
 ## 11. Pendências para decisão da equipe
 
 - Como separar XP total, XP do pet e moedas gastáveis? O documento mistura custo em XP e moedas virtuais.
+
+  - Implementação atual: `xp_total` é o XP acumulado do pet; moedas permanecem em `0` até que as regras da loja sejam definidas na Fase 3. O nível usa thresholds incrementais: nível 2 com 100 XP, nível 3 com 300 XP, nível 4 com 600 XP.
 
 - Quais valores exatos de bônus Pomodoro, streak, penalidades, recuperação e thresholds de nível?
 

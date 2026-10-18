@@ -1,0 +1,63 @@
+openapi: 3.1.0
+info:
+  title: Patafeito API
+  version: 1.0.0
+  description: API REST do Patafeito; todos os caminhos usam o prefixo `/api/v1`.
+servers:
+  - url: http://localhost:3000/api/v1
+paths:
+  /auth/register:
+    post:
+      summary: Cria uma conta e uma sessão
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterInput' }
+      responses: { '201': { description: Conta criada } }
+  /auth/login:
+    post: { summary: Autentica uma conta, responses: { '200': { description: Sessão criada } } }
+  /auth/refresh:
+    post: { summary: Rotaciona o refresh token, responses: { '200': { description: Nova dupla de tokens } } }
+  /auth/logout:
+    post: { summary: Revoga o refresh token fornecido, responses: { '204': { description: Sessão encerrada } } }
+  /pets/me:
+    get: { summary: Retorna o pet autenticado, security: [{ bearerAuth: [] }], responses: { '200': { description: Pet } } }
+    post: { summary: Cria o pet inicial, security: [{ bearerAuth: [] }], responses: { '201': { description: Pet criado } } }
+  /tasks:
+    get: { summary: Lista tarefas, security: [{ bearerAuth: [] }], responses: { '200': { description: Tarefas } } }
+    post: { summary: Cria tarefa, security: [{ bearerAuth: [] }], responses: { '201': { description: Tarefa criada } } }
+  /tasks/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    get: { summary: Obtém tarefa, security: [{ bearerAuth: [] }], responses: { '200': { description: Tarefa } } }
+    patch: { summary: Atualiza tarefa pendente, security: [{ bearerAuth: [] }], responses: { '200': { description: Tarefa atualizada } } }
+    delete: { summary: Exclui tarefa, security: [{ bearerAuth: [] }], responses: { '204': { description: Tarefa excluída } } }
+  /tasks/{id}/reschedule:
+    post: { summary: Reagenda tarefa pendente, security: [{ bearerAuth: [] }], responses: { '200': { description: Tarefa reagendada } } }
+  /tasks/{id}/complete:
+    post:
+      summary: Conclui tarefa e concede XP atomicamente
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { completedAt: { type: string, format: date-time } } }
+      responses:
+        '200': { description: Reenvios com a mesma chave retornam a mesma resposta }
+        '409': { description: Tarefa não pendente ou chave reutilizada }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    RegisterInput:
+      type: object
+      required: [email, password, displayName]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+        displayName: { type: string, minLength: 2, maxLength: 80 }

@@ -9,6 +9,7 @@ export const tasks = pgTable('tasks', {
   difficulty: varchar('difficulty', { length: 12 }).notNull(),
   status: varchar('status', { length: 20 }).notNull().default('pending'),
   dueAt: timestamp('due_at', { withTimezone: true }),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
   version: integer('version').notNull().default(1),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index('tasks_user_status_due_idx').on(table.userId, table.status, table.dueAt)]);
