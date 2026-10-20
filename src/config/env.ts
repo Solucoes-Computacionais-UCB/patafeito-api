@@ -12,6 +12,11 @@ const schema = z.object({
   JWT_ACCESS_SECRET: z.string().min(32).default(localAccessSecret),
   JWT_REFRESH_SECRET: z.string().min(32).default(localRefreshSecret),
   CORS_ORIGIN: z.string().url().default('http://localhost:8081'),
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
+  SYNC_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
+  METRICS_TOKEN: z.string().min(32).optional(),
 }).superRefine((value, context) => {
   if (value.NODE_ENV === 'production') {
     if (value.JWT_ACCESS_SECRET === localAccessSecret) context.addIssue({ code: z.ZodIssueCode.custom, path: ['JWT_ACCESS_SECRET'], message: 'JWT_ACCESS_SECRET deve ser configurado em produção.' });

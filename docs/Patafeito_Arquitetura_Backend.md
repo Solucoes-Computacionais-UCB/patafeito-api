@@ -348,7 +348,7 @@ Meta de cobertura de domínio/serviços de pelo menos 80% está no RNF011. Aceit
 
 - Fase 4 — sincronização offline e recuperação; ranking/social apenas após fluxo central estável. **Parcial:** `sync/push` e `sync/pull` oferecem snapshot inicial, cursor por usuário, idempotência de operação, conflitos por versão e tombstones para tarefas; notificações também sincronizam o estado de leitura. A fila SQLite, retry/backoff e UI de conflitos pertencem ao app.
 
-- Fase 5 — observabilidade, segurança, backup, carga e demonstração do MVP.
+- Fase 5 — observabilidade, segurança, backup, carga e demonstração do MVP. **Concluída no escopo de código:** logs JSON com `requestId`, métricas Prometheus protegidas, rate limiting, cabeçalhos de segurança, CI com PostgreSQL real e runbook de deploy/backup/restauração. Hospedagem, credenciais, execução do backup e teste de carga exigem a infraestrutura de produção.
 
 ## 11. Pendências para decisão da equipe
 

@@ -24,6 +24,12 @@ O núcleo de sincronização offline está em `POST /api/v1/sync/push` e `GET /a
 - `npm run test:integration` requer `TEST_DATABASE_URL` apontando para um PostgreSQL **exclusivo de testes**, já migrado. A suíte limpa suas tabelas.
 - O contrato HTTP está em [`docs/openapi.yaml`](docs/openapi.yaml).
 
+## Produção e operação
+
+- A API aplica rate limiting, cabeçalhos de segurança, logs JSON por requisição e métricas Prometheus em `GET /metrics` quando `METRICS_TOKEN` está configurado.
+- O pipeline em [`.github/workflows/ci.yml`](.github/workflows/ci.yml) valida lint, tipos, migrações e integração em PostgreSQL.
+- Veja o processo de deploy, backup/restauração e a política de retenção do sync em [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+
 Refresh tokens são rotativos, persistidos com hash Argon2id e revogáveis por `POST /api/v1/auth/logout`.
 
 > Em produção, defina `NODE_ENV=production`, `DATABASE_URL`, `JWT_ACCESS_SECRET` e `JWT_REFRESH_SECRET`; a API recusa os valores locais padrão.
