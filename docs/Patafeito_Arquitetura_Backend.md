@@ -237,7 +237,7 @@ A transação, por si só, não elimina corridas: fazer atualização condiciona
 | RN01      | Fácil 10 XP; média 20 XP; difícil 40 XP                       | Ledger idempotente por conclusão                 |
 | RN02      | Três tarefas vencidas consecutivas afetam humor               | Definir semântica de consecutividade \[DECIDIR\] |
 | RN03      | Pet evolui por escala incremental                             | Tabela de thresholds versionada \[DECIDIR\]      |
-| RN04      | Só sessão Pomodoro integral concede XP                        | Definir XP e verificação de duração \[DECIDIR\]  |
+| RN04      | Só sessão Pomodoro integral concede XP                        | Implementada no MVP: 25 minutos integrais, 20 XP e conclusão idempotente |
 | RN05      | 25 min foco/5 min pausa; pausa longa após 4 ciclos            | Definir duração longa \[DECIDIR\]                |
 | RN06      | Tarefa recorrente gera próxima ocorrência sem dupla conclusão | UNIQUE para instância e operação                 |
 | RN07      | Bônus por sequência produtiva                                 | Tabela de critérios e bônus \[DECIDIR\]          |
@@ -344,7 +344,7 @@ Meta de cobertura de domínio/serviços de pelo menos 80% está no RNF011. Aceit
 
 - Fase 2 — tarefas, pet, regras XP, ledger, transações e testes. **Concluída para o escopo definido:** CRUD de tarefas, RN01, ledger, transação de conclusão, idempotência persistida, progressão de nível e testes unitários/integração.
 
-- Fase 3 — sessões de foco, loja, inventário, notificações.
+- Fase 3 — sessões de foco, loja, inventário, notificações. **Concluída para o escopo de MVP:** sessões Pomodoro de 25 minutos possuem recompensa idempotente de 20 XP e 4 moedas; tarefas rendem 2/4/8 moedas por dificuldade; catálogo cosmético, compra transacional e inventário/equipamento estão implementados; notificações de conclusão são persistidas e o app controla seu estado de lida/não lida. Não há push nem worker no backend.
 
 - Fase 4 — sincronização offline e recuperação; ranking/social apenas após fluxo central estável.
 
@@ -354,9 +354,9 @@ Meta de cobertura de domínio/serviços de pelo menos 80% está no RNF011. Aceit
 
 - Como separar XP total, XP do pet e moedas gastáveis? O documento mistura custo em XP e moedas virtuais.
 
-  - Implementação atual: `xp_total` é o XP acumulado do pet; moedas permanecem em `0` até que as regras da loja sejam definidas na Fase 3. O nível usa thresholds incrementais: nível 2 com 100 XP, nível 3 com 300 XP, nível 4 com 600 XP.
+  - Implementação atual: `xp_total` é o XP acumulado do pet; moedas são apuradas pelo `reward_ledger`. Tarefas rendem 2/4/8 e Pomodoros rendem 4 moedas; compras inserem débitos no ledger. O nível usa thresholds incrementais: nível 2 com 100 XP, nível 3 com 300 XP, nível 4 com 600 XP.
 
-- Quais valores exatos de bônus Pomodoro, streak, penalidades, recuperação e thresholds de nível?
+- Quais valores exatos de bônus de streak, penalidades, recuperação e thresholds de nível? O MVP fixa a sessão Pomodoro integral em 25 minutos e 20 XP, sujeito à revisão de produto.
 
 - Sync em nuvem faz parte do MVP? Roteiro apresenta instruções conflitantes.
 

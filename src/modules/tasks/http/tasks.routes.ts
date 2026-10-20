@@ -5,6 +5,7 @@ import { db } from '../../../db/client.js';
 import { pets } from '../../../db/schema/pets.js';
 import { rewardLedger } from '../../../db/schema/reward-ledger.js';
 import { idempotencyOperations } from '../../../db/schema/idempotency-operations.js';
+import { notifications } from '../../../db/schema/notifications.js';
 import { tasks } from '../../../db/schema/tasks.js';
 import { taskXp, type Difficulty } from '../../rewards/domain/rewards.js';
 import { levelForXp } from '../../pets/domain/progression.js';
@@ -23,6 +24,8 @@ const rescheduleInput = z.object({ dueAt: z.string().datetime({ offset: true }) 
 const idempotencyKey = z.string().uuid();
 const completeTaskInput = z.object({ completedAt: z.string().datetime({ offset: true }).optional() });
 type CompletionResult = { task: typeof tasks.$inferSelect; rewards: { xp: number; coins: number }; pet: typeof pets.$inferSelect };
+
+const taskCoins: Record<Difficulty, number> = { easy: 2, medium: 4, hard: 8 };
 
 export const tasksRouter = Router();
 tasksRouter.use(requireAuth);
@@ -130,12 +133,14 @@ tasksRouter.post('/:id/complete', async (req: AuthenticatedRequest, res) => {
     }
 
     const xp = taskXp(task.difficulty as Difficulty);
-    await tx.insert(rewardLedger).values({ userId, sourceType: 'task_completion', sourceId: task.id, xpDelta: xp });
+    const coins = taskCoins[task.difficulty as Difficulty];
+    await tx.insert(rewardLedger).values({ userId, sourceType: 'task_completion', sourceId: task.id, xpDelta: xp, coinDelta: coins });
     const xpTotal = pet.xpTotal + xp;
     const [updatedPet] = await tx.update(pets).set({ xpTotal, level: levelForXp(xpTotal), version: sql`${pets.version} + 1` })
       .where(eq(pets.id, pet.id)).returning();
-    const response: CompletionResult = { task: completedTask, rewards: { xp, coins: 0 }, pet: updatedPet };
+    const response: CompletionResult = { task: completedTask, rewards: { xp, coins }, pet: updatedPet };
     await tx.insert(idempotencyOperations).values({ userId, key, operation: 'task_completion', resourceId: taskId, response });
+    await tx.insert(notifications).values({ userId, type: 'task_completed', title: 'Tarefa concluída!', body: `Você ganhou ${xp} XP e ${coins} moedas.`, data: { taskId: task.id } });
     return response;
   });
   res.json({ data: result });

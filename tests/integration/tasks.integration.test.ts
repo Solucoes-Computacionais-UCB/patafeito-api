@@ -23,7 +23,7 @@ describe('task completion integration', () => {
     pool = new Pool({ connectionString: testDatabaseUrl });
     const tables = await pool.query("SELECT to_regclass('public.users') AS users");
     if (!tables.rows[0]?.users) throw new Error('Aplique as migrações no banco definido em TEST_DATABASE_URL antes de executar a integração.');
-    await pool.query('TRUNCATE idempotency_operations, reward_ledger, tasks, pets, refresh_tokens, users CASCADE');
+    await pool.query('TRUNCATE idempotency_operations, reward_ledger, focus_sessions, tasks, pets, refresh_tokens, users CASCADE');
     const { app } = await import('../../src/app.js');
     server = createServer(app);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -54,8 +54,49 @@ describe('task completion integration', () => {
     const second = await request(`/api/v1/tasks/${task.body.data.id as string}/complete`, { method: 'POST', headers, body: '{}' });
 
     expect(first.response.status).toBe(200);
-    expect(first.body.data.rewards).toEqual({ xp: 20, coins: 0 });
+    expect(first.body.data.rewards).toEqual({ xp: 20, coins: 4 });
     expect(second.body.data).toEqual(first.body.data);
     expect((await request(`/api/v1/tasks/${task.body.data.id as string}/complete`, { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() }, body: '{}' })).response.status).toBe(409);
+  });
+
+  integrationTest('recompensa uma sessão Pomodoro integral apenas uma vez', async () => {
+    const registration = await request('/api/v1/auth/register', { method: 'POST', body: JSON.stringify({ email: `focus-${crypto.randomUUID()}@example.test`, password: 'valid-password-123', displayName: 'Focus' }) });
+    const authorization = { authorization: `Bearer ${registration.body.data.tokens.accessToken as string}` };
+    await request('/api/v1/pets/me', { method: 'POST', headers: authorization, body: JSON.stringify({ speciesId: 'dog', name: 'Nino' }) });
+    const started = await request('/api/v1/focus-sessions', { method: 'POST', headers: authorization });
+    expect(started.response.status).toBe(201);
+    const sessionId = started.body.data.id as string;
+    expect((await request(`/api/v1/focus-sessions/${sessionId}/finish`, { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() } })).response.status).toBe(409);
+    await pool.query("UPDATE focus_sessions SET started_at = now() - interval '25 minutes' WHERE id = $1", [sessionId]);
+    const key = crypto.randomUUID();
+    const headers = { ...authorization, 'idempotency-key': key };
+    const first = await request(`/api/v1/focus-sessions/${sessionId}/finish`, { method: 'POST', headers });
+    const second = await request(`/api/v1/focus-sessions/${sessionId}/finish`, { method: 'POST', headers });
+    expect(first.response.status).toBe(200);
+    expect(first.body.data.rewards).toEqual({ xp: 20, coins: 4 });
+    expect(second.body.data).toEqual(first.body.data);
+    const notifications = await request('/api/v1/notifications', { headers: authorization });
+    expect(notifications.response.status).toBe(200);
+    const notificationId = notifications.body.data[0].id as string;
+    const read = await request(`/api/v1/notifications/${notificationId}`, { method: 'PATCH', headers: authorization, body: JSON.stringify({ read: true }) });
+    expect(read.body.data.readAt).toBeTruthy();
+  });
+
+  integrationTest('compra e equipa um cosmético do inventário', async () => {
+    const registration = await request('/api/v1/auth/register', { method: 'POST', body: JSON.stringify({ email: `shop-${crypto.randomUUID()}@example.test`, password: 'valid-password-123', displayName: 'Shop' }) });
+    const authorization = { authorization: `Bearer ${registration.body.data.tokens.accessToken as string}` };
+    const userId = registration.body.data.user.id as string;
+    await pool.query('INSERT INTO reward_ledger (user_id, source_type, source_id, xp_delta, coin_delta) VALUES ($1, $2, $3, 0, 20)', [userId, 'test_credit', crypto.randomUUID()]);
+    const catalog = await request('/api/v1/shop/items', { headers: authorization });
+    expect(catalog.response.status).toBe(200);
+    const itemId = catalog.body.data[0].id as string;
+    const headers = { ...authorization, 'idempotency-key': crypto.randomUUID() };
+    const purchase = await request('/api/v1/shop/purchases', { method: 'POST', headers, body: JSON.stringify({ itemId }) });
+    expect(purchase.response.status).toBe(201);
+    expect(purchase.body.data.balanceCoins).toBe(10);
+    expect((await request('/api/v1/shop/purchases', { method: 'POST', headers, body: JSON.stringify({ itemId }) })).body.data).toEqual(purchase.body.data);
+    const equipped = await request('/api/v1/inventory', { method: 'PATCH', headers: authorization, body: JSON.stringify({ itemId }) });
+    expect(equipped.response.status).toBe(200);
+    expect(equipped.body.data.equipped).toBe(true);
   });
 });

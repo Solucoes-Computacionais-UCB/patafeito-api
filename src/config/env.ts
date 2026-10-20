@@ -13,10 +13,11 @@ const schema = z.object({
   JWT_REFRESH_SECRET: z.string().min(32).default(localRefreshSecret),
   CORS_ORIGIN: z.string().url().default('http://localhost:8081'),
 }).superRefine((value, context) => {
-  if (value.NODE_ENV !== 'production') return;
-  if (value.JWT_ACCESS_SECRET === localAccessSecret) context.addIssue({ code: z.ZodIssueCode.custom, path: ['JWT_ACCESS_SECRET'], message: 'JWT_ACCESS_SECRET deve ser configurado em produção.' });
-  if (value.JWT_REFRESH_SECRET === localRefreshSecret) context.addIssue({ code: z.ZodIssueCode.custom, path: ['JWT_REFRESH_SECRET'], message: 'JWT_REFRESH_SECRET deve ser configurado em produção.' });
-  if (value.DATABASE_URL === localDatabaseUrl) context.addIssue({ code: z.ZodIssueCode.custom, path: ['DATABASE_URL'], message: 'DATABASE_URL deve ser configurada em produção.' });
+  if (value.NODE_ENV === 'production') {
+    if (value.JWT_ACCESS_SECRET === localAccessSecret) context.addIssue({ code: z.ZodIssueCode.custom, path: ['JWT_ACCESS_SECRET'], message: 'JWT_ACCESS_SECRET deve ser configurado em produção.' });
+    if (value.JWT_REFRESH_SECRET === localRefreshSecret) context.addIssue({ code: z.ZodIssueCode.custom, path: ['JWT_REFRESH_SECRET'], message: 'JWT_REFRESH_SECRET deve ser configurado em produção.' });
+    if (value.DATABASE_URL === localDatabaseUrl) context.addIssue({ code: z.ZodIssueCode.custom, path: ['DATABASE_URL'], message: 'DATABASE_URL deve ser configurada em produção.' });
+  }
 });
 
 export const env = schema.parse(process.env);

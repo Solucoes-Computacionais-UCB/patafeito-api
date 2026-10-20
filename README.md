@@ -12,7 +12,9 @@ API REST do Patafeito, construída com Express, TypeScript, PostgreSQL e Drizzle
 
 Para parar o banco, use `docker compose down`. Os dados permanecem no volume `patafeito_postgres_data`; para removê-los, use `docker compose down -v`.
 
-A API é exposta em `/api/v1`. Estão disponíveis healthcheck/readiness, cadastro/login/refresh/logout, pet inicial e tarefas com recompensa idempotente.
+A API é exposta em `/api/v1`. Estão disponíveis healthcheck/readiness, cadastro/login/refresh/logout, pet inicial, tarefas, sessões Pomodoro de 25 minutos, loja e inventário. Tarefas rendem 2/4/8 moedas por dificuldade e cada Pomodoro integral rende 4 moedas.
+
+Notificações são persistidas na mesma transação das conclusões. O app as obtém em `GET /api/v1/notifications` e controla o estado de lida/não lida em `PATCH /api/v1/notifications/:id`; não há entrega push nem worker no backend.
 
 ## Qualidade e testes
 
