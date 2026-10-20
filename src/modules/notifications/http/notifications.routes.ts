@@ -5,6 +5,7 @@ import { db } from '../../../db/client.js';
 import { notifications } from '../../../db/schema/notifications.js';
 import { requireAuth, type AuthenticatedRequest } from '../../../shared/auth/middleware.js';
 import { AppError } from '../../../shared/errors/app-error.js';
+import { recordSyncChange } from '../../sync/infrastructure/change-log.js';
 
 const updateInput = z.object({ read: z.boolean() });
 export const notificationsRouter = Router();
@@ -24,5 +25,6 @@ notificationsRouter.patch('/:id', async (req: AuthenticatedRequest, res) => {
   const [notification] = await db.update(notifications).set({ readAt: read ? new Date() : null })
     .where(and(eq(notifications.id, id), eq(notifications.userId, req.userId!))).returning();
   if (!notification) throw new AppError(404, 'NOTIFICATION_NOT_FOUND', 'Notificação não encontrada.');
+  await recordSyncChange(db, { userId: req.userId!, entityType: 'notification', entityId: notification.id, changeType: 'upsert', version: notification.readAt?.toISOString() ?? notification.createdAt.toISOString(), data: notification });
   res.json({ data: notification });
 });

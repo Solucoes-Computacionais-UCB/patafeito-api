@@ -12,4 +12,6 @@ export const tasks = pgTable('tasks', {
   completedAt: timestamp('completed_at', { withTimezone: true }),
   version: integer('version').notNull().default(1),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
 }, (table) => [index('tasks_user_status_due_idx').on(table.userId, table.status, table.dueAt)]);

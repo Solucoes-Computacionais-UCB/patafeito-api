@@ -346,7 +346,7 @@ Meta de cobertura de domínio/serviços de pelo menos 80% está no RNF011. Aceit
 
 - Fase 3 — sessões de foco, loja, inventário, notificações. **Concluída para o escopo de MVP:** sessões Pomodoro de 25 minutos possuem recompensa idempotente de 20 XP e 4 moedas; tarefas rendem 2/4/8 moedas por dificuldade; catálogo cosmético, compra transacional e inventário/equipamento estão implementados; notificações de conclusão são persistidas e o app controla seu estado de lida/não lida. Não há push nem worker no backend.
 
-- Fase 4 — sincronização offline e recuperação; ranking/social apenas após fluxo central estável.
+- Fase 4 — sincronização offline e recuperação; ranking/social apenas após fluxo central estável. **Parcial:** `sync/push` e `sync/pull` oferecem snapshot inicial, cursor por usuário, idempotência de operação, conflitos por versão e tombstones para tarefas; notificações também sincronizam o estado de leitura. A fila SQLite, retry/backoff e UI de conflitos pertencem ao app.
 
 - Fase 5 — observabilidade, segurança, backup, carga e demonstração do MVP.
 

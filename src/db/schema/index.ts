@@ -8,3 +8,4 @@ export * from './focus-sessions.js';
 export * from './shop-items.js';
 export * from './inventory.js';
 export * from './notifications.js';
+export * from './sync.js';

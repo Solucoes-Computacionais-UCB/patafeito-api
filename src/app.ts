@@ -8,6 +8,7 @@ import { focusRouter } from './modules/focus/http/focus.routes.js';
 import { inventoryRouter } from './modules/inventory/http/inventory.routes.js';
 import { shopRouter } from './modules/shop/http/shop.routes.js';
 import { notificationsRouter } from './modules/notifications/http/notifications.routes.js';
+import { syncRouter } from './modules/sync/http/sync.routes.js';
 import { pool } from './db/client.js';
 import { errorHandler, notFound, requestId } from './shared/http/handlers.js';
 
@@ -29,5 +30,6 @@ app.use('/api/v1/focus-sessions', focusRouter);
 app.use('/api/v1/shop', shopRouter);
 app.use('/api/v1/inventory', inventoryRouter);
 app.use('/api/v1/notifications', notificationsRouter);
+app.use('/api/v1/sync', syncRouter);
 app.use(notFound);
 app.use(errorHandler);

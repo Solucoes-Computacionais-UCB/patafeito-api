@@ -8,6 +8,7 @@ import { rewardLedger } from '../../../db/schema/reward-ledger.js';
 import { shopItems } from '../../../db/schema/shop-items.js';
 import { requireAuth, type AuthenticatedRequest } from '../../../shared/auth/middleware.js';
 import { AppError } from '../../../shared/errors/app-error.js';
+import { recordSyncChange } from '../../sync/infrastructure/change-log.js';
 
 const purchaseInput = z.object({ itemId: z.string().uuid() });
 const idempotencyKey = z.string().uuid();
@@ -40,6 +41,7 @@ shopRouter.post('/purchases', async (req: AuthenticatedRequest, res) => {
     const balanceCoins = Number(balanceRow.balance);
     if (balanceCoins < item.priceCoins) throw new AppError(409, 'INSUFFICIENT_COINS', 'Moedas insuficientes para comprar este item.');
     const [inventoryItem] = await tx.insert(inventory).values({ userId, itemId }).returning();
+    await recordSyncChange(tx, { userId, entityType: 'inventory', entityId: inventoryItem.id, changeType: 'upsert', version: inventoryItem.acquiredAt.toISOString(), data: inventoryItem });
     await tx.insert(rewardLedger).values({ userId, sourceType: 'shop_purchase', sourceId: item.id, xpDelta: 0, coinDelta: -item.priceCoins });
     const response: PurchaseResult = { item, inventoryItem, balanceCoins: balanceCoins - item.priceCoins };
     await tx.insert(idempotencyOperations).values({ userId, key, operation: 'shop_purchase', resourceId: item.id, response });

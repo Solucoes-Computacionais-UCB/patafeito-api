@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../../../db/client.js';
@@ -11,6 +11,7 @@ import { taskXp, type Difficulty } from '../../rewards/domain/rewards.js';
 import { levelForXp } from '../../pets/domain/progression.js';
 import { requireAuth, type AuthenticatedRequest } from '../../../shared/auth/middleware.js';
 import { AppError } from '../../../shared/errors/app-error.js';
+import { recordSyncChange } from '../../sync/infrastructure/change-log.js';
 
 const difficulty = z.enum(['easy', 'medium', 'hard']);
 const createTaskInput = z.object({
@@ -39,14 +40,14 @@ function taskIdParam(value: unknown) {
 }
 
 async function ownedTask(taskId: string, userId: string) {
-  const task = await db.query.tasks.findFirst({ where: and(eq(tasks.id, taskId), eq(tasks.userId, userId)) });
+  const task = await db.query.tasks.findFirst({ where: and(eq(tasks.id, taskId), eq(tasks.userId, userId), isNull(tasks.deletedAt)) });
   if (!task) throw new AppError(404, 'TASK_NOT_FOUND', 'Tarefa não encontrada.');
   return task;
 }
 
 tasksRouter.get('/', async (req: AuthenticatedRequest, res) => {
   const items = await db.query.tasks.findMany({
-    where: eq(tasks.userId, req.userId!),
+    where: and(eq(tasks.userId, req.userId!), isNull(tasks.deletedAt)),
     orderBy: [desc(tasks.createdAt)],
   });
   res.json({ data: items });
@@ -62,6 +63,7 @@ tasksRouter.post('/', async (req: AuthenticatedRequest, res) => {
     dueAt,
     userId: req.userId!,
   }).returning();
+  await recordSyncChange(db, { userId: req.userId!, entityType: 'task', entityId: task.id, changeType: 'upsert', version: task.version, data: task });
   res.status(201).json({ data: task });
 });
 
@@ -78,13 +80,16 @@ tasksRouter.patch('/:id', async (req: AuthenticatedRequest, res) => {
     ...input,
     dueAt: input.dueAt === undefined ? undefined : input.dueAt === null ? null : new Date(input.dueAt),
     version: sql`${tasks.version} + 1`,
+    updatedAt: new Date(),
   }).where(and(eq(tasks.id, task.id), eq(tasks.userId, req.userId!))).returning();
+  await recordSyncChange(db, { userId: req.userId!, entityType: 'task', entityId: updated.id, changeType: 'upsert', version: updated.version, data: updated });
   res.json({ data: updated });
 });
 
 tasksRouter.delete('/:id', async (req: AuthenticatedRequest, res) => {
   const task = await ownedTask(taskIdParam(req.params.id), req.userId!);
-  await db.delete(tasks).where(and(eq(tasks.id, task.id), eq(tasks.userId, req.userId!)));
+  const [deleted] = await db.update(tasks).set({ deletedAt: new Date(), updatedAt: new Date(), version: sql`${tasks.version} + 1` }).where(and(eq(tasks.id, task.id), eq(tasks.userId, req.userId!))).returning();
+  await recordSyncChange(db, { userId: req.userId!, entityType: 'task', entityId: deleted.id, changeType: 'delete', version: deleted.version, data: { id: deleted.id, deletedAt: deleted.deletedAt?.toISOString() } });
   res.status(204).send();
 });
 
@@ -94,8 +99,9 @@ tasksRouter.post('/:id/reschedule', async (req: AuthenticatedRequest, res) => {
   if (dueAt.getTime() <= Date.now()) throw new AppError(422, 'INVALID_DUE_DATE', 'A nova data deve estar no futuro.');
   const task = await ownedTask(taskIdParam(req.params.id), req.userId!);
   if (task.status !== 'pending') throw new AppError(409, 'TASK_NOT_PENDING', 'Uma tarefa concluída não pode ser reagendada.');
-  const [updated] = await db.update(tasks).set({ dueAt, version: sql`${tasks.version} + 1` })
+  const [updated] = await db.update(tasks).set({ dueAt, version: sql`${tasks.version} + 1`, updatedAt: new Date() })
     .where(and(eq(tasks.id, task.id), eq(tasks.userId, req.userId!))).returning();
+  await recordSyncChange(db, { userId: req.userId!, entityType: 'task', entityId: updated.id, changeType: 'upsert', version: updated.version, data: updated });
   res.json({ data: updated });
 });
 
@@ -115,14 +121,14 @@ tasksRouter.post('/:id/complete', async (req: AuthenticatedRequest, res) => {
       return previousOperation.response as CompletionResult;
     }
 
-    const task = await tx.query.tasks.findFirst({ where: and(eq(tasks.id, taskId), eq(tasks.userId, userId)) });
+    const task = await tx.query.tasks.findFirst({ where: and(eq(tasks.id, taskId), eq(tasks.userId, userId), isNull(tasks.deletedAt)) });
     if (!task) throw new AppError(404, 'TASK_NOT_FOUND', 'Tarefa não encontrada.');
     const pet = await tx.query.pets.findFirst({ where: eq(pets.userId, userId) });
     if (!pet) throw new AppError(409, 'PET_REQUIRED', 'Crie um pet antes de concluir tarefas.');
     if (task.status !== 'pending') throw new AppError(409, 'TASK_NOT_PENDING', 'Esta tarefa já foi concluída.');
     if (isOverdue(task)) throw new AppError(409, 'TASK_OVERDUE', 'Uma tarefa vencida não pode ser concluída.');
 
-    const [completedTask] = await tx.update(tasks).set({ status: 'completed', completedAt, version: sql`${tasks.version} + 1` })
+    const [completedTask] = await tx.update(tasks).set({ status: 'completed', completedAt, version: sql`${tasks.version} + 1`, updatedAt: new Date() })
       .where(and(eq(tasks.id, task.id), eq(tasks.userId, userId), eq(tasks.status, 'pending'))).returning();
     if (!completedTask) {
       const concurrentOperation = await tx.query.idempotencyOperations.findFirst({
@@ -140,7 +146,10 @@ tasksRouter.post('/:id/complete', async (req: AuthenticatedRequest, res) => {
       .where(eq(pets.id, pet.id)).returning();
     const response: CompletionResult = { task: completedTask, rewards: { xp, coins }, pet: updatedPet };
     await tx.insert(idempotencyOperations).values({ userId, key, operation: 'task_completion', resourceId: taskId, response });
-    await tx.insert(notifications).values({ userId, type: 'task_completed', title: 'Tarefa concluída!', body: `Você ganhou ${xp} XP e ${coins} moedas.`, data: { taskId: task.id } });
+    await recordSyncChange(tx, { userId, entityType: 'task', entityId: completedTask.id, changeType: 'upsert', version: completedTask.version, data: completedTask });
+    await recordSyncChange(tx, { userId, entityType: 'pet', entityId: updatedPet.id, changeType: 'upsert', version: updatedPet.version, data: updatedPet });
+    const [notification] = await tx.insert(notifications).values({ userId, type: 'task_completed', title: 'Tarefa concluída!', body: `Você ganhou ${xp} XP e ${coins} moedas.`, data: { taskId: task.id } }).returning();
+    await recordSyncChange(tx, { userId, entityType: 'notification', entityId: notification.id, changeType: 'upsert', version: notification.createdAt.toISOString(), data: notification });
     return response;
   });
   res.json({ data: result });

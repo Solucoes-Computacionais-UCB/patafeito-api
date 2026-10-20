@@ -120,6 +120,33 @@ paths:
           application/json:
             schema: { type: object, required: [read], properties: { read: { type: boolean } } }
       responses: { '200': { description: Estado atualizado } }
+  /sync/push:
+    post:
+      summary: Aplica um lote idempotente de alterações offline
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operations]
+              properties:
+                operations:
+                  type: array
+                  maxItems: 50
+      responses:
+        '200': { description: Resultado individual por operação: task.create, task.update, task.delete, notification.read e inventory.equip; applied, duplicate, conflict ou rejected }
+  /sync/pull:
+    get:
+      summary: Obtém o snapshot inicial ou alterações posteriores ao cursor
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses: { '200': { description: Mudanças, próximo cursor e hasMore para paginação } }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }

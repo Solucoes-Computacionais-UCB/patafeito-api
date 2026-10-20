@@ -10,6 +10,7 @@ import { notifications } from '../../../db/schema/notifications.js';
 import { levelForXp } from '../../pets/domain/progression.js';
 import { requireAuth, type AuthenticatedRequest } from '../../../shared/auth/middleware.js';
 import { AppError } from '../../../shared/errors/app-error.js';
+import { recordSyncChange } from '../../sync/infrastructure/change-log.js';
 
 const POMODORO_DURATION_SECONDS = 25 * 60;
 const POMODORO_XP = 20;
@@ -93,7 +94,9 @@ focusRouter.post('/:id/finish', async (req: AuthenticatedRequest, res) => {
       resourceId: sessionId,
       response,
     });
-    await tx.insert(notifications).values({ userId, type: 'focus_completed', title: 'Foco concluído!', body: `Você ganhou ${POMODORO_XP} XP e ${POMODORO_COINS} moedas.`, data: { sessionId: session.id } });
+    const [notification] = await tx.insert(notifications).values({ userId, type: 'focus_completed', title: 'Foco concluído!', body: `Você ganhou ${POMODORO_XP} XP e ${POMODORO_COINS} moedas.`, data: { sessionId: session.id } }).returning();
+    await recordSyncChange(tx, { userId, entityType: 'pet', entityId: updatedPet.id, changeType: 'upsert', version: updatedPet.version, data: updatedPet });
+    await recordSyncChange(tx, { userId, entityType: 'notification', entityId: notification.id, changeType: 'upsert', version: notification.createdAt.toISOString(), data: notification });
     return response;
   });
   res.json({ data: result });

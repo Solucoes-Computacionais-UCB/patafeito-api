@@ -57,6 +57,13 @@
       "when": 1792535422349,
       "tag": "0007_notification_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792535703068,
+      "tag": "0008_sync_core",
+      "breakpoints": true
     }
   ]
 }

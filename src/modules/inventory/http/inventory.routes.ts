@@ -6,6 +6,7 @@ import { inventory } from '../../../db/schema/inventory.js';
 import { shopItems } from '../../../db/schema/shop-items.js';
 import { requireAuth, type AuthenticatedRequest } from '../../../shared/auth/middleware.js';
 import { AppError } from '../../../shared/errors/app-error.js';
+import { recordSyncChange } from '../../sync/infrastructure/change-log.js';
 
 const equipInput = z.object({ itemId: z.string().uuid() });
 export const inventoryRouter = Router();
@@ -24,14 +25,17 @@ inventoryRouter.patch('/', async (req: AuthenticatedRequest, res) => {
     .innerJoin(shopItems, eq(inventory.itemId, shopItems.id))
     .where(and(eq(inventory.userId, userId), eq(inventory.itemId, itemId))).then((rows) => rows[0]);
   if (!item) throw new AppError(404, 'INVENTORY_ITEM_NOT_FOUND', 'O item não pertence ao inventário.');
-  await db.transaction(async (tx) => {
+  const updated = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${userId}))`);
     const ownedInSlot = await tx.select({ id: inventory.id }).from(inventory).innerJoin(shopItems, eq(inventory.itemId, shopItems.id))
       .where(and(eq(inventory.userId, userId), eq(shopItems.slot, item.shopItem.slot)));
     for (const ownedItem of ownedInSlot) {
-      await tx.update(inventory).set({ equipped: false }).where(eq(inventory.id, ownedItem.id));
+      const [unequipped] = await tx.update(inventory).set({ equipped: false }).where(eq(inventory.id, ownedItem.id)).returning();
+      await recordSyncChange(tx, { userId, entityType: 'inventory', entityId: unequipped.id, changeType: 'upsert', version: unequipped.acquiredAt.toISOString(), data: unequipped });
     }
-    await tx.update(inventory).set({ equipped: true }).where(eq(inventory.id, item.inventory.id));
+    const [equipped] = await tx.update(inventory).set({ equipped: true }).where(eq(inventory.id, item.inventory.id)).returning();
+    await recordSyncChange(tx, { userId, entityType: 'inventory', entityId: equipped.id, changeType: 'upsert', version: equipped.acquiredAt.toISOString(), data: equipped });
+    return equipped;
   });
-  res.json({ data: { ...item.inventory, equipped: true } });
+  res.json({ data: updated });
 });

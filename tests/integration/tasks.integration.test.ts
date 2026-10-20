@@ -99,4 +99,17 @@ describe('task completion integration', () => {
     expect(equipped.response.status).toBe(200);
     expect(equipped.body.data.equipped).toBe(true);
   });
+
+  integrationTest('sincroniza criação de tarefa com idempotência e cursor', async () => {
+    const registration = await request('/api/v1/auth/register', { method: 'POST', body: JSON.stringify({ email: `sync-${crypto.randomUUID()}@example.test`, password: 'valid-password-123', displayName: 'Sync' }) });
+    const authorization = { authorization: `Bearer ${registration.body.data.tokens.accessToken as string}` };
+    const operation = { opId: crypto.randomUUID(), type: 'task.create', payload: { title: 'Offline', difficulty: 'easy' } };
+    const first = await request('/api/v1/sync/push', { method: 'POST', headers: authorization, body: JSON.stringify({ operations: [operation] }) });
+    const second = await request('/api/v1/sync/push', { method: 'POST', headers: authorization, body: JSON.stringify({ operations: [operation] }) });
+    expect(first.body.data.results[0].status).toBe('applied');
+    expect(second.body.data.results[0].status).toBe('duplicate');
+    const snapshot = await request('/api/v1/sync/pull', { headers: authorization });
+    expect(snapshot.body.data.snapshot).toBe(true);
+    expect(snapshot.body.data.changes.some((change: { entityType: string }) => change.entityType === 'task')).toBe(true);
+  });
 });

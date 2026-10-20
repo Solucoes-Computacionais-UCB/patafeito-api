@@ -16,6 +16,8 @@ A API é exposta em `/api/v1`. Estão disponíveis healthcheck/readiness, cadast
 
 Notificações são persistidas na mesma transação das conclusões. O app as obtém em `GET /api/v1/notifications` e controla o estado de lida/não lida em `PATCH /api/v1/notifications/:id`; não há entrega push nem worker no backend.
 
+O núcleo de sincronização offline está em `POST /api/v1/sync/push` e `GET /api/v1/sync/pull`. A API aceita criação, edição e exclusão de tarefas, alteração de leitura de notificações e equipamento de inventário; `pull` retorna `hasMore` para paginação. XP, moedas, compras, foco e estado do pet continuam sob autoridade exclusiva do servidor.
+
 ## Qualidade e testes
 
 - `npm run lint`, `npm run typecheck` e `npm test` executam as verificações locais.

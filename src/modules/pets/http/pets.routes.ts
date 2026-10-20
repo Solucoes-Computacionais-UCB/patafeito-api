@@ -5,6 +5,7 @@ import { db } from '../../../db/client.js';
 import { pets } from '../../../db/schema/pets.js';
 import { requireAuth, type AuthenticatedRequest } from '../../../shared/auth/middleware.js';
 import { AppError } from '../../../shared/errors/app-error.js';
+import { recordSyncChange } from '../../sync/infrastructure/change-log.js';
 
 export const petsRouter = Router();
 petsRouter.use(requireAuth);
@@ -18,5 +19,6 @@ petsRouter.post('/me', async (req: AuthenticatedRequest, res) => {
   const existing = await db.query.pets.findFirst({ where: eq(pets.userId, req.userId!) });
   if (existing) throw new AppError(409, 'PET_ALREADY_EXISTS', 'O usuário já possui um pet.');
   const [pet] = await db.insert(pets).values({ ...input, userId: req.userId! }).returning();
+  await recordSyncChange(db, { userId: req.userId!, entityType: 'pet', entityId: pet.id, changeType: 'upsert', version: pet.version, data: pet });
   res.status(201).json({ data: pet });
 });
