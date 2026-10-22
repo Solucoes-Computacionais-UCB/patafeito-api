@@ -67,7 +67,8 @@ describe('task completion integration', () => {
     expect(started.response.status).toBe(201);
     const sessionId = started.body.data.id as string;
     expect((await request(`/api/v1/focus-sessions/${sessionId}/finish`, { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() } })).response.status).toBe(409);
-    await pool.query("UPDATE focus_sessions SET started_at = now() - interval '25 minutes' WHERE id = $1", [sessionId]);
+    // 26 minutos: a margem evita falso negativo quando o relógio do banco está alguns milissegundos à frente.
+    await pool.query("UPDATE focus_sessions SET started_at = now() - interval '26 minutes' WHERE id = $1", [sessionId]);
     const key = crypto.randomUUID();
     const headers = { ...authorization, 'idempotency-key': key };
     const first = await request(`/api/v1/focus-sessions/${sessionId}/finish`, { method: 'POST', headers });
@@ -111,5 +112,86 @@ describe('task completion integration', () => {
     const snapshot = await request('/api/v1/sync/pull', { headers: authorization });
     expect(snapshot.body.data.snapshot).toBe(true);
     expect(snapshot.body.data.changes.some((change: { entityType: string }) => change.entityType === 'task')).toBe(true);
+  });
+
+  integrationTest('conclui tarefa e sessão de foco offline sem conceder XP duas vezes', async () => {
+    const registration = await request('/api/v1/auth/register', { method: 'POST', body: JSON.stringify({ email: `offline-${crypto.randomUUID()}@example.test`, password: 'valid-password-123', displayName: 'Offline' }) });
+    const authorization = { authorization: `Bearer ${registration.body.data.tokens.accessToken as string}` };
+    await request('/api/v1/pets/me', { method: 'POST', headers: authorization, body: JSON.stringify({ speciesId: 'pingo', name: 'Pingo' }) });
+    const created = await request('/api/v1/tasks', { method: 'POST', headers: authorization, body: JSON.stringify({ title: 'Tarefa offline', difficulty: 'hard' }) });
+    const taskId = created.body.data.id as string;
+
+    const completion = { opId: crypto.randomUUID(), type: 'task.complete', resourceId: taskId, payload: { completedAt: new Date().toISOString() } };
+    const firstPush = await request('/api/v1/sync/push', { method: 'POST', headers: authorization, body: JSON.stringify({ operations: [completion] }) });
+    const replayPush = await request('/api/v1/sync/push', { method: 'POST', headers: authorization, body: JSON.stringify({ operations: [completion] }) });
+    expect(firstPush.body.data.results[0].status).toBe('applied');
+    expect(firstPush.body.data.results[0].data.rewards).toEqual({ xp: 40, coins: 8 });
+    expect(replayPush.body.data.results[0].status).toBe('duplicate');
+
+    // Outra operação sobre a mesma tarefa já concluída é conflito, não uma segunda recompensa.
+    const secondAttempt = await request('/api/v1/sync/push', { method: 'POST', headers: authorization, body: JSON.stringify({ operations: [{ ...completion, opId: crypto.randomUUID() }] }) });
+    expect(secondAttempt.body.data.results[0].status).toBe('conflict');
+
+    const startedAt = new Date(Date.now() - 26 * 60 * 1000).toISOString();
+    const focus = { opId: crypto.randomUUID(), type: 'focus.complete', resourceId: crypto.randomUUID(), payload: { startedAt, finishedAt: new Date().toISOString() } };
+    const focusPush = await request('/api/v1/sync/push', { method: 'POST', headers: authorization, body: JSON.stringify({ operations: [focus] }) });
+    expect(focusPush.body.data.results[0].status).toBe('applied');
+    expect(focusPush.body.data.results[0].data.rewards).toEqual({ xp: 20, coins: 4 });
+    const shortFocus = { opId: crypto.randomUUID(), type: 'focus.complete', resourceId: crypto.randomUUID(), payload: { startedAt: new Date(Date.now() - 60_000).toISOString(), finishedAt: new Date().toISOString() } };
+    expect((await request('/api/v1/sync/push', { method: 'POST', headers: authorization, body: JSON.stringify({ operations: [shortFocus] }) })).body.data.results[0].status).toBe('conflict');
+
+    const balance = await request('/api/v1/rewards/balance', { headers: authorization });
+    expect(balance.body.data).toEqual({ coins: 12, xpTotal: 60 });
+  });
+
+  integrationTest('desmarca uma tarefa, estorna a recompensa e permite concluir de novo', async () => {
+    const registration = await request('/api/v1/auth/register', { method: 'POST', body: JSON.stringify({ email: `reopen-${crypto.randomUUID()}@example.test`, password: 'valid-password-123', displayName: 'Reopen' }) });
+    const authorization = { authorization: `Bearer ${registration.body.data.tokens.accessToken as string}` };
+    await request('/api/v1/pets/me', { method: 'POST', headers: authorization, body: JSON.stringify({ speciesId: 'bento', name: 'Bento' }) });
+    const created = await request('/api/v1/tasks', { method: 'POST', headers: authorization, body: JSON.stringify({ title: 'Arrumar a mesa', difficulty: 'medium' }) });
+    const taskId = created.body.data.id as string;
+
+    const completed = await request(`/api/v1/tasks/${taskId}/complete`, { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() }, body: '{}' });
+    expect(completed.body.data.rewards).toEqual({ xp: 20, coins: 4 });
+
+    const reopened = await request(`/api/v1/tasks/${taskId}/reopen`, { method: 'POST', headers: authorization });
+    expect(reopened.response.status).toBe(200);
+    expect(reopened.body.data.refunded).toEqual({ xp: 20, coins: 4 });
+    expect(reopened.body.data.task.status).toBe('pending');
+    expect(reopened.body.data.task.completedAt).toBeNull();
+    expect(reopened.body.data.pet.xpTotal).toBe(0);
+    expect((await request('/api/v1/rewards/balance', { headers: authorization })).body.data).toEqual({ coins: 0, xpTotal: 0 });
+
+    // Desmarcar de novo não tem efeito, e concluir outra vez volta a creditar.
+    expect((await request(`/api/v1/tasks/${taskId}/reopen`, { method: 'POST', headers: authorization })).response.status).toBe(409);
+    const again = await request(`/api/v1/tasks/${taskId}/complete`, { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() }, body: '{}' });
+    expect(again.response.status).toBe(200);
+    expect((await request('/api/v1/rewards/balance', { headers: authorization })).body.data).toEqual({ coins: 4, xpTotal: 20 });
+
+    // Pela fila offline o caminho é o mesmo.
+    const operation = { opId: crypto.randomUUID(), type: 'task.reopen', resourceId: taskId, payload: {} };
+    const push = await request('/api/v1/sync/push', { method: 'POST', headers: authorization, body: JSON.stringify({ operations: [operation] }) });
+    expect(push.body.data.results[0].status).toBe('applied');
+    expect((await request('/api/v1/sync/push', { method: 'POST', headers: authorization, body: JSON.stringify({ operations: [operation] }) })).body.data.results[0].status).toBe('duplicate');
+    expect((await request('/api/v1/rewards/balance', { headers: authorization })).body.data).toEqual({ coins: 0, xpTotal: 0 });
+  });
+
+  integrationTest('recusa desmarcar quando as moedas da tarefa já foram gastas', async () => {
+    const registration = await request('/api/v1/auth/register', { method: 'POST', body: JSON.stringify({ email: `spent-${crypto.randomUUID()}@example.test`, password: 'valid-password-123', displayName: 'Spent' }) });
+    const authorization = { authorization: `Bearer ${registration.body.data.tokens.accessToken as string}` };
+    await request('/api/v1/pets/me', { method: 'POST', headers: authorization, body: JSON.stringify({ speciesId: 'pingo', name: 'Pingo' }) });
+    const created = await request('/api/v1/tasks', { method: 'POST', headers: authorization, body: JSON.stringify({ title: 'Tarefa paga', difficulty: 'hard' }) });
+    const taskId = created.body.data.id as string;
+    await request(`/api/v1/tasks/${taskId}/complete`, { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() }, body: '{}' });
+
+    const catalog = await request('/api/v1/shop/items', { headers: authorization });
+    const affordable = (catalog.body.data as { id: string; priceCoins: number }[]).find((item) => item.priceCoins <= 8);
+    expect(affordable).toBeTruthy();
+    const purchase = await request('/api/v1/shop/purchases', { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() }, body: JSON.stringify({ itemId: affordable!.id }) });
+    expect(purchase.response.status).toBe(201);
+
+    const reopened = await request(`/api/v1/tasks/${taskId}/reopen`, { method: 'POST', headers: authorization });
+    expect(reopened.response.status).toBe(409);
+    expect(reopened.body.error.code).toBe('COINS_ALREADY_SPENT');
   });
 });

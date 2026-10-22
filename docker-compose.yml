@@ -8,7 +8,8 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: patafeito
     ports:
-      - '5432:5432'
+      # Use POSTGRES_PORT=5433 (e ajuste DATABASE_URL) se já houver um PostgreSQL local na 5432.
+      - '${POSTGRES_PORT:-5432}:5432'
     volumes:
       - patafeito_postgres_data:/var/lib/postgresql/data
     healthcheck:

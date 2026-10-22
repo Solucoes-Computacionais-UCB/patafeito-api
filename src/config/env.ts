@@ -17,6 +17,8 @@ const schema = z.object({
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
   SYNC_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
   METRICS_TOKEN: z.string().min(32).optional(),
+  /** Swagger UI em `/docs`. Sem valor explícito, fica ligado fora de produção. */
+  DOCS_ENABLED: z.enum(['true', 'false']).optional(),
 }).superRefine((value, context) => {
   if (value.NODE_ENV === 'production') {
     if (value.JWT_ACCESS_SECRET === localAccessSecret) context.addIssue({ code: z.ZodIssueCode.custom, path: ['JWT_ACCESS_SECRET'], message: 'JWT_ACCESS_SECRET deve ser configurado em produção.' });
@@ -26,3 +28,5 @@ const schema = z.object({
 });
 
 export const env = schema.parse(process.env);
+
+export const docsEnabled = env.DOCS_ENABLED ? env.DOCS_ENABLED === 'true' : env.NODE_ENV !== 'production';

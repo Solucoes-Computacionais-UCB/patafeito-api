@@ -11,13 +11,18 @@ import { shopItems } from '../../../db/schema/shop-items.js';
 import { requireAuth, type AuthenticatedRequest } from '../../../shared/auth/middleware.js';
 import { AppError } from '../../../shared/errors/app-error.js';
 import { recordSyncChange } from '../infrastructure/change-log.js';
+import { completeTask } from '../../tasks/application/complete-task.js';
+import { reopenTask } from '../../tasks/application/reopen-task.js';
+import { recordOfflineFocusSession } from '../../focus/application/complete-focus-session.js';
 
 const difficulty = z.enum(['easy', 'medium', 'hard']);
 const taskCreate = z.object({ title: z.string().trim().min(1).max(200), description: z.string().trim().max(2000).nullable().optional(), difficulty, dueAt: z.string().datetime({ offset: true }).nullable().optional() });
 const taskUpdate = taskCreate.partial().refine((value) => Object.keys(value).length > 0, 'Informe campos para atualizar.');
+const taskComplete = z.object({ completedAt: z.string().datetime({ offset: true }).optional() });
+const focusComplete = z.object({ startedAt: z.string().datetime({ offset: true }), finishedAt: z.string().datetime({ offset: true }) });
 const operationInput = z.object({
   opId: z.string().uuid(),
-  type: z.enum(['task.create', 'task.update', 'task.delete', 'notification.read', 'inventory.equip']),
+  type: z.enum(['task.create', 'task.update', 'task.delete', 'task.complete', 'task.reopen', 'notification.read', 'inventory.equip', 'focus.complete']),
   resourceId: z.string().uuid().optional(),
   baseVersion: z.coerce.number().int().positive().optional(),
   payload: z.record(z.unknown()).default({}),
@@ -47,8 +52,13 @@ async function applyOperation(userId: string, operation: z.infer<typeof operatio
     try {
       if (operation.type === 'task.create') {
         const input = taskCreate.parse(operation.payload);
-        const [task] = await tx.insert(tasks).values({ ...input, dueAt: input.dueAt ? new Date(input.dueAt) : null, userId }).returning();
-        await recordSyncChange(tx, { userId, entityType: 'task', entityId: task.id, changeType: 'upsert', version: task.version, data: taskData(task) });
+        // O app envia o id gerado no aparelho em `resourceId`, para que operações seguintes
+        // do mesmo lote (concluir, editar) já referenciem a tarefa certa.
+        const [created] = await tx.insert(tasks).values({ ...input, id: operation.resourceId, dueAt: input.dueAt ? new Date(input.dueAt) : null, userId })
+          .onConflictDoNothing({ target: tasks.id }).returning();
+        const task = created ?? await tx.query.tasks.findFirst({ where: and(eq(tasks.id, operation.resourceId!), eq(tasks.userId, userId)) });
+        if (!task) throw new AppError(409, 'TASK_ID_IN_USE', 'Este identificador de tarefa já pertence a outra conta.');
+        if (created) await recordSyncChange(tx, { userId, entityType: 'task', entityId: task.id, changeType: 'upsert', version: task.version, data: taskData(task) });
         result = { opId: operation.opId, status: 'applied', data: taskData(task) };
       } else if (operation.type === 'task.update') {
         const input = taskUpdate.parse(operation.payload);
@@ -70,6 +80,19 @@ async function applyOperation(userId: string, operation: z.infer<typeof operatio
         const [deleted] = await tx.update(tasks).set({ deletedAt: new Date(), updatedAt: new Date(), version: sql`${tasks.version} + 1` }).where(eq(tasks.id, task.id)).returning();
         await recordSyncChange(tx, { userId, entityType: 'task', entityId: deleted.id, changeType: 'delete', version: deleted.version, data: { id: deleted.id, deletedAt: deleted.deletedAt?.toISOString() } });
         result = { opId: operation.opId, status: 'applied', data: { id: deleted.id, version: deleted.version } };
+      } else if (operation.type === 'task.complete') {
+        const input = taskComplete.parse(operation.payload);
+        const completedAt = input.completedAt ? new Date(input.completedAt) : new Date();
+        if (completedAt.getTime() > Date.now() + 60_000) throw new AppError(409, 'INVALID_COMPLETION_DATE', 'A conclusão não pode estar no futuro.');
+        const completion = await completeTask(tx, { userId, taskId: operation.resourceId!, completedAt });
+        result = { opId: operation.opId, status: 'applied', data: { task: taskData(completion.task), rewards: completion.rewards, pet: completion.pet } };
+      } else if (operation.type === 'task.reopen') {
+        const reopened = await reopenTask(tx, { userId, taskId: operation.resourceId! });
+        result = { opId: operation.opId, status: 'applied', data: { task: taskData(reopened.task), refunded: reopened.refunded, pet: reopened.pet } };
+      } else if (operation.type === 'focus.complete') {
+        const input = focusComplete.parse(operation.payload);
+        const completion = await recordOfflineFocusSession(tx, { userId, sessionId: operation.resourceId!, startedAt: new Date(input.startedAt), finishedAt: new Date(input.finishedAt) });
+        result = { opId: operation.opId, status: 'applied', data: { session: completion.session, rewards: completion.rewards, pet: completion.pet } };
       } else if (operation.type === 'notification.read') {
         const read = z.object({ read: z.boolean() }).parse(operation.payload);
         const [notification] = await tx.update(notifications).set({ readAt: read.read ? new Date() : null }).where(and(eq(notifications.id, operation.resourceId!), eq(notifications.userId, userId))).returning();

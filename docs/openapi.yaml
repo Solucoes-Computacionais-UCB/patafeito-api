@@ -50,6 +50,14 @@ paths:
       responses:
         '200': { description: Reenvios com a mesma chave retornam a mesma resposta }
         '409': { description: Tarefa não pendente ou chave reutilizada }
+  /tasks/{id}/reopen:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      summary: Desfaz a conclusão e estorna XP e moedas
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Tarefa pendente de novo, com o total estornado e o pet atualizado' }
+        '409': { description: 'Tarefa não concluída ou moedas já gastas' }
   /focus-sessions:
     post:
       summary: Inicia uma sessão Pomodoro de 25 minutos
@@ -104,6 +112,11 @@ paths:
           application/json:
             schema: { type: object, required: [itemId], properties: { itemId: { type: string, format: uuid } } }
       responses: { '200': { description: Item equipado } }
+  /rewards/balance:
+    get:
+      summary: Saldo de moedas e XP acumulado pelo usuário autenticado
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: 'Objeto com coins e xpTotal' } }
   /notifications:
     get:
       summary: Lista as notificações do usuário autenticado
@@ -135,8 +148,21 @@ paths:
                 operations:
                   type: array
                   maxItems: 50
+                  items:
+                    type: object
+                    required: [opId, type]
+                    properties:
+                      opId: { type: string, format: uuid, description: 'Chave de idempotência da operação' }
+                      type:
+                        type: string
+                        enum: [task.create, task.update, task.delete, task.complete, task.reopen, notification.read, inventory.equip, focus.complete]
+                      resourceId: { type: string, format: uuid, description: 'Obrigatório exceto em task.create, onde é opcional e adota o id gerado pelo aparelho; em focus.complete é sempre o id gerado pelo aparelho' }
+                      baseVersion: { type: integer, minimum: 1, description: 'Obrigatório em task.update' }
+                      payload:
+                        type: object
+                        description: 'task.complete aceita completedAt; focus.complete exige startedAt e finishedAt, com duração mínima de 25 minutos'
       responses:
-        '200': { description: Resultado individual por operação: task.create, task.update, task.delete, notification.read e inventory.equip; applied, duplicate, conflict ou rejected }
+        '200': { description: 'Resultado individual por operação, com status applied, duplicate, conflict ou rejected' }
   /sync/pull:
     get:
       summary: Obtém o snapshot inicial ou alterações posteriores ao cursor
