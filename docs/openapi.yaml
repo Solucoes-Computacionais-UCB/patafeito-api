@@ -116,14 +116,31 @@ paths:
       security: [{ bearerAuth: [] }]
       responses: { '200': { description: Inventário } }
     patch:
-      summary: Equipa um item do inventário
+      summary: 'Equipa (padrão) ou tira um cosmético. Um equipado por categoria; consumíveis não são equipáveis'
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { type: object, required: [itemId], properties: { itemId: { type: string, format: uuid } } }
-      responses: { '200': { description: Item equipado } }
+            schema: { type: object, required: [itemId], properties: { itemId: { type: string, format: uuid }, equipped: { type: boolean, default: true } } }
+      responses: { '200': { description: Item atualizado }, '409': { description: Item consumível } }
+  /inventory/use:
+    post:
+      summary: 'Usa uma unidade de um consumível. Comida e café mudam os status do pet; poção e trevo dobram XP ou moedas por 2 horas; ampulheta dobra o próximo ciclo de foco; escudo protege o dia localDate (AAAA-MM-DD, só hoje)'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [itemId], properties: { itemId: { type: string, format: uuid }, localDate: { type: string, example: '2026-10-23' } } }
+      responses: { '200': { description: '{ inventoryItem, pet, boost }' }, '404': { description: Item não disponível }, '409': { description: Item não usável ou dia já protegido } }
+  /inventory/boosts:
+    get:
+      summary: 'Poderes em andamento ({ effect, expiresAt, usesLeft }) e dias protegidos pelo escudo'
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: '{ active, protectedDates }' } }
   /rewards/balance:
     get:
       summary: Saldo de moedas e XP acumulado pelo usuário autenticado

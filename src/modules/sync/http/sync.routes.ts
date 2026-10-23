@@ -36,7 +36,7 @@ const operationInput = z.object({
 const pushInput = z.object({ operations: z.array(operationInput).min(1).max(50) });
 const pullQuery = z.object({ cursor: z.coerce.number().int().nonnegative().optional() });
 
-type SyncResult = { opId: string; status: 'applied' | 'duplicate' | 'conflict' | 'rejected'; data?: unknown; reason?: string };
+type SyncResult = { opId: string; status: 'applied' | 'duplicate' | 'conflict' | 'rejected'; data?: unknown; reason?: string; code?: string };
 
 function taskData(task: typeof tasks.$inferSelect) {
   return { ...task, deletedAt: task.deletedAt?.toISOString() ?? null };
@@ -124,8 +124,8 @@ async function applyOperation(userId: string, operation: z.infer<typeof operatio
         result = { opId: operation.opId, status: 'applied', data: equipped };
       }
     } catch (error) {
-      if (error instanceof AppError && error.status === 409) result = { opId: operation.opId, status: 'conflict', reason: error.message };
-      else if (error instanceof AppError && error.status === 404) result = { opId: operation.opId, status: 'rejected', reason: error.message };
+      if (error instanceof AppError && error.status === 409) result = { opId: operation.opId, status: 'conflict', reason: error.message, code: error.code };
+      else if (error instanceof AppError && error.status === 404) result = { opId: operation.opId, status: 'rejected', reason: error.message, code: error.code };
       else throw error;
     }
     await tx.insert(syncOperations).values({ userId, opId: operation.opId, operation: operation.type, resourceId: operation.resourceId, result });

@@ -1,4 +1,4 @@
-import { boolean, index, pgTable, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, pgTable, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { shopItems } from './shop-items.js';
 import { users } from './users.js';
 
@@ -7,6 +7,8 @@ export const inventory = pgTable('inventory', {
   userId: uuid('user_id').notNull().references(() => users.id),
   itemId: uuid('item_id').notNull().references(() => shopItems.id),
   equipped: boolean('equipped').notNull().default(false),
+  /** Unidades de um consumível; itens comuns ficam em 1. */
+  quantity: integer('quantity').notNull().default(1),
   acquiredAt: timestamp('acquired_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique('inventory_user_item_unique').on(table.userId, table.itemId),

@@ -5,6 +5,7 @@ import { pets } from '../../../db/schema/pets.js';
 import { rewardLedger } from '../../../db/schema/reward-ledger.js';
 import { tasks } from '../../../db/schema/tasks.js';
 import { AppError } from '../../../shared/errors/app-error.js';
+import { boostedRewards } from '../../inventory/application/boosts.js';
 import { levelForXp } from '../../pets/domain/progression.js';
 import { nextStats, taskBoost } from '../../pets/domain/stats.js';
 import { taskCoins, taskXp, type Difficulty } from '../../rewards/domain/rewards.js';
@@ -34,8 +35,7 @@ export async function completeTask(tx: Transaction, input: { userId: string; tas
     .where(and(eq(tasks.id, task.id), eq(tasks.userId, userId), eq(tasks.status, 'pending'))).returning();
   if (!completedTask) throw new AppError(409, 'TASK_NOT_PENDING', 'Esta tarefa já foi concluída.');
 
-  const xp = taskXp(task.difficulty as Difficulty);
-  const coins = taskCoins(task.difficulty as Difficulty);
+  const { xp, coins } = await boostedRewards(tx, userId, completedAt, { xp: taskXp(task.difficulty as Difficulty), coins: taskCoins(task.difficulty as Difficulty) }, 'task');
   await tx.insert(rewardLedger).values({ userId, sourceType: 'task_completion', sourceId: task.id, xpDelta: xp, coinDelta: coins });
   const xpTotal = pet.xpTotal + xp;
   const [updatedPet] = await tx.update(pets).set({ xpTotal, level: levelForXp(xpTotal), ...nextStats(pet, new Date(), taskBoost(task.difficulty as Difficulty)), version: sql`${pets.version} + 1` })

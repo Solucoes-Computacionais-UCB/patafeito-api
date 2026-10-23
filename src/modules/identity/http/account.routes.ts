@@ -3,6 +3,7 @@ import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../../../db/client.js';
+import { activeBoosts } from '../../../db/schema/active-boosts.js';
 import { focusSessions } from '../../../db/schema/focus-sessions.js';
 import { inventory } from '../../../db/schema/inventory.js';
 import { notifications } from '../../../db/schema/notifications.js';
@@ -78,7 +79,7 @@ accountRouter.post('/password', async (req: AuthenticatedRequest, res) => {
 });
 
 /**
- * Zera XP, nível, moedas, inventário, ciclos de foco, notificações e tarefas concluídas.
+ * Zera XP, nível, moedas, inventário, poderes ativos, ciclos de foco, notificações e tarefas concluídas.
  * O pet (nome e espécie) e as tarefas pendentes continuam.
  */
 accountRouter.post('/reset-progress', async (req: AuthenticatedRequest, res) => {
@@ -90,6 +91,7 @@ accountRouter.post('/reset-progress', async (req: AuthenticatedRequest, res) => 
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${userId}))`);
     await tx.delete(rewardLedger).where(eq(rewardLedger.userId, userId));
     await tx.delete(inventory).where(eq(inventory.userId, userId));
+    await tx.delete(activeBoosts).where(eq(activeBoosts.userId, userId));
     await tx.delete(focusSessions).where(eq(focusSessions.userId, userId));
     await tx.delete(notifications).where(eq(notifications.userId, userId));
 

@@ -85,6 +85,13 @@
       "when": 1792777640052,
       "tag": "0011_pet_companions",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792795931393,
+      "tag": "0012_shop_consumables",
+      "breakpoints": true
     }
   ]
 }

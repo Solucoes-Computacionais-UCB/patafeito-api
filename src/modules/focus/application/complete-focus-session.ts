@@ -5,6 +5,7 @@ import { notifications } from '../../../db/schema/notifications.js';
 import { pets } from '../../../db/schema/pets.js';
 import { rewardLedger } from '../../../db/schema/reward-ledger.js';
 import { AppError } from '../../../shared/errors/app-error.js';
+import { boostedRewards } from '../../inventory/application/boosts.js';
 import { levelForXp } from '../../pets/domain/progression.js';
 import { FOCUS_BOOST, nextStats } from '../../pets/domain/stats.js';
 import { recordSyncChange } from '../../sync/infrastructure/change-log.js';
@@ -36,7 +37,7 @@ export function isFullPomodoro(startedAt: Date, finishedAt: Date, durationSecond
 async function award(tx: Transaction, userId: string, session: typeof focusSessions.$inferSelect): Promise<FocusCompletionResult> {
   const pet = await tx.query.pets.findFirst({ where: eq(pets.userId, userId) });
   if (!pet) throw new AppError(409, 'PET_REQUIRED', 'Crie um pet antes de concluir sessões de foco.');
-  const { xp, coins } = focusRewards(session.durationSeconds);
+  const { xp, coins } = await boostedRewards(tx, userId, session.finishedAt ?? new Date(), focusRewards(session.durationSeconds), 'focus');
   await tx.insert(rewardLedger).values({ userId, sourceType: 'focus_session_completion', sourceId: session.id, xpDelta: xp, coinDelta: coins });
   const xpTotal = pet.xpTotal + xp;
   const [updatedPet] = await tx.update(pets).set({ xpTotal, level: levelForXp(xpTotal), ...nextStats(pet, new Date(), FOCUS_BOOST), version: sql`${pets.version} + 1` }).where(eq(pets.id, pet.id)).returning();

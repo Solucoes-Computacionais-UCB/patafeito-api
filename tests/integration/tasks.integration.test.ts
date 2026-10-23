@@ -90,11 +90,13 @@ describe('task completion integration', () => {
     await pool.query('INSERT INTO reward_ledger (user_id, source_type, source_id, xp_delta, coin_delta) VALUES ($1, $2, $3, 0, 20)', [userId, 'test_credit', crypto.randomUUID()]);
     const catalog = await request('/api/v1/shop/items', { headers: authorization });
     expect(catalog.response.status).toBe(200);
-    const itemId = catalog.body.data[0].id as string;
+    // Cosmético equipável: o cenário mais barato (os consumíveis vêm antes no catálogo).
+    const scene = (catalog.body.data as { id: string; slot: string; priceCoins: number }[]).find((item) => item.slot === 'background')!;
+    const itemId = scene.id;
     const headers = { ...authorization, 'idempotency-key': crypto.randomUUID() };
     const purchase = await request('/api/v1/shop/purchases', { method: 'POST', headers, body: JSON.stringify({ itemId }) });
     expect(purchase.response.status).toBe(201);
-    expect(purchase.body.data.balanceCoins).toBe(10);
+    expect(purchase.body.data.balanceCoins).toBe(20 - scene.priceCoins);
     expect((await request('/api/v1/shop/purchases', { method: 'POST', headers, body: JSON.stringify({ itemId }) })).body.data).toEqual(purchase.body.data);
     const equipped = await request('/api/v1/inventory', { method: 'PATCH', headers: authorization, body: JSON.stringify({ itemId }) });
     expect(equipped.response.status).toBe(200);

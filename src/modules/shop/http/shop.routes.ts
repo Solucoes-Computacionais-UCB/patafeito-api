@@ -18,7 +18,7 @@ export const shopRouter = Router();
 shopRouter.use(requireAuth);
 
 shopRouter.get('/items', async (_req, res) => {
-  const items = await db.query.shopItems.findMany({ where: eq(shopItems.active, true), orderBy: [asc(shopItems.priceCoins)] });
+  const items = await db.query.shopItems.findMany({ where: eq(shopItems.active, true), orderBy: [asc(shopItems.sortOrder), asc(shopItems.priceCoins)] });
   res.json({ data: items });
 });
 
@@ -36,13 +36,17 @@ shopRouter.post('/purchases', async (req: AuthenticatedRequest, res) => {
     const item = await tx.query.shopItems.findFirst({ where: and(eq(shopItems.id, itemId), eq(shopItems.active, true)) });
     if (!item) throw new AppError(404, 'SHOP_ITEM_NOT_FOUND', 'Item da loja não encontrado.');
     const owned = await tx.query.inventory.findFirst({ where: and(eq(inventory.userId, userId), eq(inventory.itemId, itemId)) });
-    if (owned) throw new AppError(409, 'ITEM_ALREADY_OWNED', 'Este item já pertence ao inventário.');
+    if (owned && !item.consumable) throw new AppError(409, 'ITEM_ALREADY_OWNED', 'Este item já pertence ao inventário.');
     const [balanceRow] = await tx.select({ balance: sql<string>`coalesce(sum(${rewardLedger.coinDelta}), 0)` }).from(rewardLedger).where(eq(rewardLedger.userId, userId));
     const balanceCoins = Number(balanceRow.balance);
     if (balanceCoins < item.priceCoins) throw new AppError(409, 'INSUFFICIENT_COINS', 'Moedas insuficientes para comprar este item.');
-    const [inventoryItem] = await tx.insert(inventory).values({ userId, itemId }).returning();
+    // Consumíveis acumulam: comprar de novo soma uma unidade à mesma linha do inventário.
+    const [inventoryItem] = owned
+      ? await tx.update(inventory).set({ quantity: sql`${inventory.quantity} + 1` }).where(eq(inventory.id, owned.id)).returning()
+      : await tx.insert(inventory).values({ userId, itemId }).returning();
     await recordSyncChange(tx, { userId, entityType: 'inventory', entityId: inventoryItem.id, changeType: 'upsert', version: inventoryItem.acquiredAt.toISOString(), data: inventoryItem });
-    await tx.insert(rewardLedger).values({ userId, sourceType: 'shop_purchase', sourceId: item.id, xpDelta: 0, coinDelta: -item.priceCoins });
+    // A chave de idempotência identifica cada compra: o mesmo consumível pode ser comprado várias vezes.
+    await tx.insert(rewardLedger).values({ userId, sourceType: 'shop_purchase', sourceId: key, xpDelta: 0, coinDelta: -item.priceCoins });
     const response: PurchaseResult = { item, inventoryItem, balanceCoins: balanceCoins - item.priceCoins };
     await tx.insert(idempotencyOperations).values({ userId, key, operation: 'shop_purchase', resourceId: item.id, response });
     return response;
