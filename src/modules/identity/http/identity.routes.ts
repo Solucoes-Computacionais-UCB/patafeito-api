@@ -15,7 +15,7 @@ const registerInput = credentials.extend({ displayName: z.string().trim().min(2)
 const refreshTokenLifetimeMs = 30 * 24 * 60 * 60 * 1000;
 type DatabaseExecutor = Pick<typeof db, 'insert'>;
 
-const issueTokens = async (userId: string, executor: DatabaseExecutor = db) => {
+export const issueTokens = async (userId: string, executor: DatabaseExecutor = db) => {
   const refreshTokenId = crypto.randomUUID();
   const refreshToken = jwt.sign({}, env.JWT_REFRESH_SECRET, { subject: userId, jwtid: refreshTokenId, expiresIn: '30d' });
   await executor.insert(refreshTokens).values({

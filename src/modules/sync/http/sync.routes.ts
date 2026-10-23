@@ -13,16 +13,19 @@ import { AppError } from '../../../shared/errors/app-error.js';
 import { recordSyncChange } from '../infrastructure/change-log.js';
 import { completeTask } from '../../tasks/application/complete-task.js';
 import { reopenTask } from '../../tasks/application/reopen-task.js';
-import { recordOfflineFocusSession } from '../../focus/application/complete-focus-session.js';
+import { MAX_FOCUS_SECONDS, MIN_FOCUS_SECONDS, recordOfflineFocusSession } from '../../focus/application/complete-focus-session.js';
+import { feedPet } from '../../pets/application/feed-pet.js';
+import { checkRecurrence, recurrenceFields } from '../../tasks/domain/recurrence.js';
 
 const difficulty = z.enum(['easy', 'medium', 'hard']);
-const taskCreate = z.object({ title: z.string().trim().min(1).max(200), description: z.string().trim().max(2000).nullable().optional(), difficulty, dueAt: z.string().datetime({ offset: true }).nullable().optional() });
-const taskUpdate = taskCreate.partial().refine((value) => Object.keys(value).length > 0, 'Informe campos para atualizar.');
+const taskFields = z.object({ title: z.string().trim().min(1).max(200), description: z.string().trim().max(2000).nullable().optional(), difficulty, dueAt: z.string().datetime({ offset: true }).nullable().optional(), ...recurrenceFields });
+const taskCreate = taskFields.superRefine(checkRecurrence);
+const taskUpdate = taskFields.partial().refine((value) => Object.keys(value).length > 0, 'Informe campos para atualizar.').superRefine(checkRecurrence);
 const taskComplete = z.object({ completedAt: z.string().datetime({ offset: true }).optional() });
-const focusComplete = z.object({ startedAt: z.string().datetime({ offset: true }), finishedAt: z.string().datetime({ offset: true }) });
+const focusComplete = z.object({ startedAt: z.string().datetime({ offset: true }), finishedAt: z.string().datetime({ offset: true }), durationSeconds: z.number().int().min(MIN_FOCUS_SECONDS).max(MAX_FOCUS_SECONDS).optional() });
 const operationInput = z.object({
   opId: z.string().uuid(),
-  type: z.enum(['task.create', 'task.update', 'task.delete', 'task.complete', 'task.reopen', 'notification.read', 'inventory.equip', 'focus.complete']),
+  type: z.enum(['task.create', 'task.update', 'task.delete', 'task.complete', 'task.reopen', 'notification.read', 'inventory.equip', 'focus.complete', 'pet.feed']),
   resourceId: z.string().uuid().optional(),
   baseVersion: z.coerce.number().int().positive().optional(),
   payload: z.record(z.unknown()).default({}),
@@ -58,6 +61,8 @@ async function applyOperation(userId: string, operation: z.infer<typeof operatio
           .onConflictDoNothing({ target: tasks.id }).returning();
         const task = created ?? await tx.query.tasks.findFirst({ where: and(eq(tasks.id, operation.resourceId!), eq(tasks.userId, userId)) });
         if (!task) throw new AppError(409, 'TASK_ID_IN_USE', 'Este identificador de tarefa já pertence a outra conta.');
+        // Repetições têm id determinístico: outro aparelho pode recriar uma que já foi excluída.
+        if (task.deletedAt) throw new AppError(409, 'TASK_DELETED', 'Esta tarefa já foi excluída.');
         if (created) await recordSyncChange(tx, { userId, entityType: 'task', entityId: task.id, changeType: 'upsert', version: task.version, data: taskData(task) });
         result = { opId: operation.opId, status: 'applied', data: taskData(task) };
       } else if (operation.type === 'task.update') {
@@ -91,8 +96,11 @@ async function applyOperation(userId: string, operation: z.infer<typeof operatio
         result = { opId: operation.opId, status: 'applied', data: { task: taskData(reopened.task), refunded: reopened.refunded, pet: reopened.pet } };
       } else if (operation.type === 'focus.complete') {
         const input = focusComplete.parse(operation.payload);
-        const completion = await recordOfflineFocusSession(tx, { userId, sessionId: operation.resourceId!, startedAt: new Date(input.startedAt), finishedAt: new Date(input.finishedAt) });
+        const completion = await recordOfflineFocusSession(tx, { userId, sessionId: operation.resourceId!, startedAt: new Date(input.startedAt), finishedAt: new Date(input.finishedAt), durationSeconds: input.durationSeconds });
         result = { opId: operation.opId, status: 'applied', data: { session: completion.session, rewards: completion.rewards, pet: completion.pet } };
+      } else if (operation.type === 'pet.feed') {
+        const fed = await feedPet(tx, { userId, feedId: operation.resourceId! });
+        result = { opId: operation.opId, status: 'applied', data: fed };
       } else if (operation.type === 'notification.read') {
         const read = z.object({ read: z.boolean() }).parse(operation.payload);
         const [notification] = await tx.update(notifications).set({ readAt: read.read ? new Date() : null }).where(and(eq(notifications.id, operation.resourceId!), eq(notifications.userId, userId))).returning();

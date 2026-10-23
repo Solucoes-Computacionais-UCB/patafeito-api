@@ -3,6 +3,7 @@ import express from 'express';
 import { docsEnabled, env } from './config/env.js';
 import { createDocsRouter } from './shared/http/docs.js';
 import { identityRouter } from './modules/identity/http/identity.routes.js';
+import { accountRouter } from './modules/identity/http/account.routes.js';
 import { petsRouter } from './modules/pets/http/pets.routes.js';
 import { tasksRouter } from './modules/tasks/http/tasks.routes.js';
 import { focusRouter } from './modules/focus/http/focus.routes.js';
@@ -42,6 +43,7 @@ app.get('/metrics', (req, res, next) => {
   res.type('text/plain').send(prometheusMetrics());
 });
 app.use('/api/v1/auth', rateLimit('auth', env.AUTH_RATE_LIMIT_MAX, env.RATE_LIMIT_WINDOW_MS), identityRouter);
+app.use('/api/v1/me', rateLimit('account', env.AUTH_RATE_LIMIT_MAX, env.RATE_LIMIT_WINDOW_MS), accountRouter);
 app.use('/api/v1/pets', petsRouter);
 app.use('/api/v1/tasks', tasksRouter);
 app.use('/api/v1/focus-sessions', focusRouter);

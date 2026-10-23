@@ -21,9 +21,21 @@ paths:
     post: { summary: Rotaciona o refresh token, responses: { '200': { description: Nova dupla de tokens } } }
   /auth/logout:
     post: { summary: Revoga o refresh token fornecido, responses: { '204': { description: Sessão encerrada } } }
+  /me:
+    get: { summary: Retorna a conta autenticada, security: [{ bearerAuth: [] }], responses: { '200': { description: 'Usuário { id, email, displayName }' } } }
+    patch: { summary: 'Atualiza displayName e/ou email. Trocar o email exige currentPassword', security: [{ bearerAuth: [] }], responses: { '200': { description: Usuário atualizado }, '403': { description: Senha atual incorreta }, '409': { description: E-mail em uso } } }
+  /me/password:
+    post: { summary: 'Troca a senha ({ currentPassword, newPassword }), revoga as outras sessões e devolve tokens novos', security: [{ bearerAuth: [] }], responses: { '200': { description: Tokens novos }, '403': { description: Senha atual incorreta } } }
+  /me/reset-progress:
+    post: { summary: 'Zera XP, nível, moedas, inventário, ciclos de foco, notificações e tarefas concluídas; mantém o pet e as tarefas pendentes. Exige currentPassword', security: [{ bearerAuth: [] }], responses: { '200': { description: Pet zerado }, '403': { description: Senha atual incorreta } } }
   /pets/me:
-    get: { summary: Retorna o pet autenticado, security: [{ bearerAuth: [] }], responses: { '200': { description: Pet } } }
+    get: { summary: 'Retorna o pet autenticado, com fome, energia e felicidade já decaídas até agora', security: [{ bearerAuth: [] }], responses: { '200': { description: Pet } } }
     post: { summary: Cria o pet inicial, security: [{ bearerAuth: [] }], responses: { '201': { description: Pet criado } } }
+    patch: { summary: 'Troca o apelido do pet ({ name }, 2 a 15 caracteres)', security: [{ bearerAuth: [] }], responses: { '200': { description: Pet renomeado } } }
+  /pets/me/switch:
+    post: { summary: 'Troca a espécie ({ speciesId, name }); XP, nível e status continuam e o período anterior vai para o histórico', security: [{ bearerAuth: [] }], responses: { '200': { description: Pet trocado }, '409': { description: Já é a espécie atual } } }
+  /pets/me/history:
+    get: { summary: 'Períodos com cada espécie ({ speciesId, name, startedAt, endedAt }), do mais antigo ao atual', security: [{ bearerAuth: [] }], responses: { '200': { description: Histórico } } }
   /tasks:
     get: { summary: Lista tarefas, security: [{ bearerAuth: [] }], responses: { '200': { description: Tarefas } } }
     post: { summary: Cria tarefa, security: [{ bearerAuth: [] }], responses: { '201': { description: Tarefa criada } } }
@@ -60,7 +72,7 @@ paths:
         '409': { description: 'Tarefa não concluída ou moedas já gastas' }
   /focus-sessions:
     post:
-      summary: Inicia uma sessão Pomodoro de 25 minutos
+      summary: 'Inicia uma sessão Pomodoro. Corpo opcional { durationSeconds } entre 300 e 7200; padrão 1500 (25 minutos)'
       security: [{ bearerAuth: [] }]
       responses: { '201': { description: Sessão iniciada } }
   /focus-sessions/{id}/finish:
@@ -155,12 +167,12 @@ paths:
                       opId: { type: string, format: uuid, description: 'Chave de idempotência da operação' }
                       type:
                         type: string
-                        enum: [task.create, task.update, task.delete, task.complete, task.reopen, notification.read, inventory.equip, focus.complete]
-                      resourceId: { type: string, format: uuid, description: 'Obrigatório exceto em task.create, onde é opcional e adota o id gerado pelo aparelho; em focus.complete é sempre o id gerado pelo aparelho' }
+                        enum: [task.create, task.update, task.delete, task.complete, task.reopen, notification.read, inventory.equip, focus.complete, pet.feed]
+                      resourceId: { type: string, format: uuid, description: 'Obrigatório exceto em task.create, onde é opcional e adota o id gerado pelo aparelho; em focus.complete e pet.feed é sempre o id gerado pelo aparelho' }
                       baseVersion: { type: integer, minimum: 1, description: 'Obrigatório em task.update' }
                       payload:
                         type: object
-                        description: 'task.complete aceita completedAt; focus.complete exige startedAt e finishedAt, com duração mínima de 25 minutos'
+                        description: 'task.complete aceita completedAt; focus.complete exige startedAt e finishedAt e aceita durationSeconds (300 a 7200, padrão 1500); o período precisa cobrir a duração e a recompensa é proporcional (20 XP e 4 moedas a cada 25 minutos); pet.feed não tem payload e custa 5 moedas'
       responses:
         '200': { description: 'Resultado individual por operação, com status applied, duplicate, conflict ou rejected' }
   /sync/pull:

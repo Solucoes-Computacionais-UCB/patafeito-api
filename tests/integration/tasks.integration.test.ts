@@ -54,7 +54,7 @@ describe('task completion integration', () => {
     const second = await request(`/api/v1/tasks/${task.body.data.id as string}/complete`, { method: 'POST', headers, body: '{}' });
 
     expect(first.response.status).toBe(200);
-    expect(first.body.data.rewards).toEqual({ xp: 20, coins: 4 });
+    expect(first.body.data.rewards).toEqual({ xp: 20, coins: 2 });
     expect(second.body.data).toEqual(first.body.data);
     expect((await request(`/api/v1/tasks/${task.body.data.id as string}/complete`, { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() }, body: '{}' })).response.status).toBe(409);
   });
@@ -125,7 +125,7 @@ describe('task completion integration', () => {
     const firstPush = await request('/api/v1/sync/push', { method: 'POST', headers: authorization, body: JSON.stringify({ operations: [completion] }) });
     const replayPush = await request('/api/v1/sync/push', { method: 'POST', headers: authorization, body: JSON.stringify({ operations: [completion] }) });
     expect(firstPush.body.data.results[0].status).toBe('applied');
-    expect(firstPush.body.data.results[0].data.rewards).toEqual({ xp: 40, coins: 8 });
+    expect(firstPush.body.data.results[0].data.rewards).toEqual({ xp: 40, coins: 3 });
     expect(replayPush.body.data.results[0].status).toBe('duplicate');
 
     // Outra operação sobre a mesma tarefa já concluída é conflito, não uma segunda recompensa.
@@ -141,7 +141,27 @@ describe('task completion integration', () => {
     expect((await request('/api/v1/sync/push', { method: 'POST', headers: authorization, body: JSON.stringify({ operations: [shortFocus] }) })).body.data.results[0].status).toBe('conflict');
 
     const balance = await request('/api/v1/rewards/balance', { headers: authorization });
-    expect(balance.body.data).toEqual({ coins: 12, xpTotal: 60 });
+    expect(balance.body.data).toEqual({ coins: 7, xpTotal: 60 });
+  });
+
+  integrationTest('registra ciclos de foco com duração escolhida e recompensa proporcional', async () => {
+    const registration = await request('/api/v1/auth/register', { method: 'POST', body: JSON.stringify({ email: `rhythm-${crypto.randomUUID()}@example.test`, password: 'valid-password-123', displayName: 'Rhythm' }) });
+    const authorization = { authorization: `Bearer ${registration.body.data.tokens.accessToken as string}` };
+    await request('/api/v1/pets/me', { method: 'POST', headers: authorization, body: JSON.stringify({ speciesId: 'pingo', name: 'Pingo' }) });
+    const push = (startedMinutesAgo: number, durationSeconds: number) => request('/api/v1/sync/push', { method: 'POST', headers: authorization, body: JSON.stringify({ operations: [{
+      opId: crypto.randomUUID(), type: 'focus.complete', resourceId: crypto.randomUUID(),
+      payload: { startedAt: new Date(Date.now() - startedMinutesAgo * 60_000).toISOString(), finishedAt: new Date().toISOString(), durationSeconds },
+    }] }) });
+
+    const short = await push(16, 15 * 60);
+    expect(short.body.data.results[0].data.rewards).toEqual({ xp: 12, coins: 2 });
+    expect(short.body.data.results[0].data.session.durationSeconds).toBe(15 * 60);
+    // O período precisa cobrir a duração declarada: 30 minutos não fecham um ciclo longo de 50.
+    expect((await push(30, 50 * 60)).body.data.results[0].status).toBe('conflict');
+    expect((await push(200, 180 * 60)).response.status).toBe(422);
+
+    const started = await request('/api/v1/focus-sessions', { method: 'POST', headers: authorization, body: JSON.stringify({ durationSeconds: 50 * 60 }) });
+    expect(started.body.data.durationSeconds).toBe(50 * 60);
   });
 
   integrationTest('desmarca uma tarefa, estorna a recompensa e permite concluir de novo', async () => {
@@ -152,11 +172,11 @@ describe('task completion integration', () => {
     const taskId = created.body.data.id as string;
 
     const completed = await request(`/api/v1/tasks/${taskId}/complete`, { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() }, body: '{}' });
-    expect(completed.body.data.rewards).toEqual({ xp: 20, coins: 4 });
+    expect(completed.body.data.rewards).toEqual({ xp: 20, coins: 2 });
 
     const reopened = await request(`/api/v1/tasks/${taskId}/reopen`, { method: 'POST', headers: authorization });
     expect(reopened.response.status).toBe(200);
-    expect(reopened.body.data.refunded).toEqual({ xp: 20, coins: 4 });
+    expect(reopened.body.data.refunded).toEqual({ xp: 20, coins: 2 });
     expect(reopened.body.data.task.status).toBe('pending');
     expect(reopened.body.data.task.completedAt).toBeNull();
     expect(reopened.body.data.pet.xpTotal).toBe(0);
@@ -166,7 +186,7 @@ describe('task completion integration', () => {
     expect((await request(`/api/v1/tasks/${taskId}/reopen`, { method: 'POST', headers: authorization })).response.status).toBe(409);
     const again = await request(`/api/v1/tasks/${taskId}/complete`, { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() }, body: '{}' });
     expect(again.response.status).toBe(200);
-    expect((await request('/api/v1/rewards/balance', { headers: authorization })).body.data).toEqual({ coins: 4, xpTotal: 20 });
+    expect((await request('/api/v1/rewards/balance', { headers: authorization })).body.data).toEqual({ coins: 2, xpTotal: 20 });
 
     // Pela fila offline o caminho é o mesmo.
     const operation = { opId: crypto.randomUUID(), type: 'task.reopen', resourceId: taskId, payload: {} };
@@ -176,19 +196,44 @@ describe('task completion integration', () => {
     expect((await request('/api/v1/rewards/balance', { headers: authorization })).body.data).toEqual({ coins: 0, xpTotal: 0 });
   });
 
+  integrationTest('guarda a repetição da tarefa e recusa recriar uma repetição excluída', async () => {
+    const registration = await request('/api/v1/auth/register', { method: 'POST', body: JSON.stringify({ email: `repeat-${crypto.randomUUID()}@example.test`, password: 'valid-password-123', displayName: 'Repeat' }) });
+    const authorization = { authorization: `Bearer ${registration.body.data.tokens.accessToken as string}` };
+    expect((await request('/api/v1/tasks', { method: 'POST', headers: authorization, body: JSON.stringify({ title: 'Sem dia', difficulty: 'easy', recurrence: 'weekly' }) })).response.status).toBe(422);
+
+    const seriesId = crypto.randomUUID();
+    const occurrence = { opId: crypto.randomUUID(), type: 'task.create', resourceId: seriesId, payload: { title: 'Planejar a semana', difficulty: 'medium', dueAt: new Date(Date.now() + 86_400_000).toISOString(), recurrence: 'weekly', recurrenceDay: 1, seriesId } };
+    const created = await request('/api/v1/sync/push', { method: 'POST', headers: authorization, body: JSON.stringify({ operations: [occurrence] }) });
+    expect(created.body.data.results[0].data).toMatchObject({ id: seriesId, recurrence: 'weekly', recurrenceDay: 1, seriesId });
+
+    await request(`/api/v1/tasks/${seriesId}`, { method: 'DELETE', headers: authorization });
+    const recreated = await request('/api/v1/sync/push', { method: 'POST', headers: authorization, body: JSON.stringify({ operations: [{ ...occurrence, opId: crypto.randomUUID() }] }) });
+    expect(recreated.body.data.results[0].status).toBe('conflict');
+  });
+
   integrationTest('recusa desmarcar quando as moedas da tarefa já foram gastas', async () => {
     const registration = await request('/api/v1/auth/register', { method: 'POST', body: JSON.stringify({ email: `spent-${crypto.randomUUID()}@example.test`, password: 'valid-password-123', displayName: 'Spent' }) });
     const authorization = { authorization: `Bearer ${registration.body.data.tokens.accessToken as string}` };
     await request('/api/v1/pets/me', { method: 'POST', headers: authorization, body: JSON.stringify({ speciesId: 'pingo', name: 'Pingo' }) });
-    const created = await request('/api/v1/tasks', { method: 'POST', headers: authorization, body: JSON.stringify({ title: 'Tarefa paga', difficulty: 'hard' }) });
-    const taskId = created.body.data.id as string;
-    await request(`/api/v1/tasks/${taskId}/complete`, { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() }, body: '{}' });
 
+    // O catálogo vem do banco: o teste junta só o bastante para o item mais barato.
     const catalog = await request('/api/v1/shop/items', { headers: authorization });
-    const affordable = (catalog.body.data as { id: string; priceCoins: number }[]).find((item) => item.priceCoins <= 8);
-    expect(affordable).toBeTruthy();
-    const purchase = await request('/api/v1/shop/purchases', { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() }, body: JSON.stringify({ itemId: affordable!.id }) });
+    const cheapest = (catalog.body.data as { id: string; priceCoins: number }[])[0];
+    expect(cheapest).toBeTruthy();
+
+    // Tarefas difíceis valem 3 moedas: depois da compra sobram menos de 3, então a última não pode ser estornada.
+    const hardTaskCoins = 3;
+    let taskId = '';
+    for (let paid = 0; paid < cheapest.priceCoins; paid += hardTaskCoins) {
+      const created = await request('/api/v1/tasks', { method: 'POST', headers: authorization, body: JSON.stringify({ title: `Tarefa paga ${paid / hardTaskCoins + 1}`, difficulty: 'hard' }) });
+      taskId = created.body.data.id as string;
+      const completed = await request(`/api/v1/tasks/${taskId}/complete`, { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() }, body: '{}' });
+      expect(completed.body.data.rewards.coins).toBe(hardTaskCoins);
+    }
+
+    const purchase = await request('/api/v1/shop/purchases', { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() }, body: JSON.stringify({ itemId: cheapest.id }) });
     expect(purchase.response.status).toBe(201);
+    expect(purchase.body.data.balanceCoins).toBeLessThan(hardTaskCoins);
 
     const reopened = await request(`/api/v1/tasks/${taskId}/reopen`, { method: 'POST', headers: authorization });
     expect(reopened.response.status).toBe(409);

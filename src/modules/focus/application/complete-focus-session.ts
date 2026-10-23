@@ -6,11 +6,21 @@ import { pets } from '../../../db/schema/pets.js';
 import { rewardLedger } from '../../../db/schema/reward-ledger.js';
 import { AppError } from '../../../shared/errors/app-error.js';
 import { levelForXp } from '../../pets/domain/progression.js';
+import { FOCUS_BOOST, nextStats } from '../../pets/domain/stats.js';
 import { recordSyncChange } from '../../sync/infrastructure/change-log.js';
 
 export const POMODORO_DURATION_SECONDS = 25 * 60;
 export const POMODORO_XP = 20;
 export const POMODORO_COINS = 4;
+/** Limites de um ciclo personalizado. */
+export const MIN_FOCUS_SECONDS = 5 * 60;
+export const MAX_FOCUS_SECONDS = 120 * 60;
+
+/** Recompensa proporcional à duração: o ciclo clássico de 25 minutos vale 20 XP e 4 moedas. */
+export function focusRewards(durationSeconds: number) {
+  const ratio = durationSeconds / POMODORO_DURATION_SECONDS;
+  return { xp: Math.round(POMODORO_XP * ratio), coins: Math.round(POMODORO_COINS * ratio) };
+}
 
 export type FocusCompletionResult = {
   session: typeof focusSessions.$inferSelect;
@@ -26,13 +36,14 @@ export function isFullPomodoro(startedAt: Date, finishedAt: Date, durationSecond
 async function award(tx: Transaction, userId: string, session: typeof focusSessions.$inferSelect): Promise<FocusCompletionResult> {
   const pet = await tx.query.pets.findFirst({ where: eq(pets.userId, userId) });
   if (!pet) throw new AppError(409, 'PET_REQUIRED', 'Crie um pet antes de concluir sessões de foco.');
-  await tx.insert(rewardLedger).values({ userId, sourceType: 'focus_session_completion', sourceId: session.id, xpDelta: POMODORO_XP, coinDelta: POMODORO_COINS });
-  const xpTotal = pet.xpTotal + POMODORO_XP;
-  const [updatedPet] = await tx.update(pets).set({ xpTotal, level: levelForXp(xpTotal), version: sql`${pets.version} + 1` }).where(eq(pets.id, pet.id)).returning();
-  const [notification] = await tx.insert(notifications).values({ userId, type: 'focus_completed', title: 'Foco concluído!', body: `Você ganhou ${POMODORO_XP} XP e ${POMODORO_COINS} moedas.`, data: { sessionId: session.id } }).returning();
+  const { xp, coins } = focusRewards(session.durationSeconds);
+  await tx.insert(rewardLedger).values({ userId, sourceType: 'focus_session_completion', sourceId: session.id, xpDelta: xp, coinDelta: coins });
+  const xpTotal = pet.xpTotal + xp;
+  const [updatedPet] = await tx.update(pets).set({ xpTotal, level: levelForXp(xpTotal), ...nextStats(pet, new Date(), FOCUS_BOOST), version: sql`${pets.version} + 1` }).where(eq(pets.id, pet.id)).returning();
+  const [notification] = await tx.insert(notifications).values({ userId, type: 'focus_completed', title: 'Foco concluído!', body: `Você ganhou ${xp} XP e ${coins} moedas.`, data: { sessionId: session.id } }).returning();
   await recordSyncChange(tx, { userId, entityType: 'pet', entityId: updatedPet.id, changeType: 'upsert', version: updatedPet.version, data: updatedPet });
   await recordSyncChange(tx, { userId, entityType: 'notification', entityId: notification.id, changeType: 'upsert', version: notification.createdAt.toISOString(), data: notification });
-  return { session, rewards: { xp: POMODORO_XP, coins: POMODORO_COINS }, pet: updatedPet };
+  return { session, rewards: { xp, coins }, pet: updatedPet };
 }
 
 /** Finaliza uma sessão iniciada no servidor (fluxo online). */
@@ -49,13 +60,13 @@ export async function finishFocusSession(tx: Transaction, input: { userId: strin
 }
 
 /** Registra uma sessão conduzida offline pelo app, usando o identificador gerado no aparelho. */
-export async function recordOfflineFocusSession(tx: Transaction, input: { userId: string; sessionId: string; startedAt: Date; finishedAt: Date; taskId?: string | null }): Promise<FocusCompletionResult> {
-  const { userId, sessionId, startedAt, finishedAt } = input;
+export async function recordOfflineFocusSession(tx: Transaction, input: { userId: string; sessionId: string; startedAt: Date; finishedAt: Date; durationSeconds?: number; taskId?: string | null }): Promise<FocusCompletionResult> {
+  const { userId, sessionId, startedAt, finishedAt, durationSeconds = POMODORO_DURATION_SECONDS } = input;
   const now = Date.now();
   if (startedAt.getTime() > now || finishedAt.getTime() > now + 60_000) throw new AppError(409, 'FOCUS_SESSION_INVALID_PERIOD', 'O período informado para a sessão de foco é inválido.');
-  if (!isFullPomodoro(startedAt, finishedAt)) throw new AppError(409, 'FOCUS_SESSION_INCOMPLETE', 'A sessão Pomodoro não atingiu a duração mínima.');
+  if (!isFullPomodoro(startedAt, finishedAt, durationSeconds)) throw new AppError(409, 'FOCUS_SESSION_INCOMPLETE', 'A sessão Pomodoro não atingiu a duração mínima.');
   const [session] = await tx.insert(focusSessions)
-    .values({ id: sessionId, userId, status: 'completed', durationSeconds: POMODORO_DURATION_SECONDS, startedAt, finishedAt })
+    .values({ id: sessionId, userId, status: 'completed', durationSeconds, startedAt, finishedAt })
     .onConflictDoNothing({ target: focusSessions.id }).returning();
   if (!session) throw new AppError(409, 'FOCUS_SESSION_ALREADY_RECORDED', 'Esta sessão de foco já foi registrada.');
   return award(tx, userId, session);

@@ -5,6 +5,8 @@ import { rewardLedger } from '../../../db/schema/reward-ledger.js';
 import { tasks } from '../../../db/schema/tasks.js';
 import { AppError } from '../../../shared/errors/app-error.js';
 import { levelForXp } from '../../pets/domain/progression.js';
+import { nextStats, taskBoost } from '../../pets/domain/stats.js';
+import type { Difficulty } from '../../rewards/domain/rewards.js';
 import { recordSyncChange } from '../../sync/infrastructure/change-log.js';
 
 export type TaskReopenResult = {
@@ -53,7 +55,7 @@ export async function reopenTask(tx: Transaction, input: { userId: string; taskI
   }
 
   const xpTotal = Math.max(0, pet.xpTotal - xp);
-  const [updatedPet] = await tx.update(pets).set({ xpTotal, level: levelForXp(xpTotal), version: sql`${pets.version} + 1` })
+  const [updatedPet] = await tx.update(pets).set({ xpTotal, level: levelForXp(xpTotal), ...nextStats(pet, new Date(), taskBoost(task.difficulty as Difficulty), -1), version: sql`${pets.version} + 1` })
     .where(eq(pets.id, pet.id)).returning();
 
   await recordSyncChange(tx, { userId, entityType: 'task', entityId: reopened.id, changeType: 'upsert', version: reopened.version, data: reopened });

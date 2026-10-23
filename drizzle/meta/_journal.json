@@ -64,6 +64,27 @@
       "when": 1792535703068,
       "tag": "0008_sync_core",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792774877814,
+      "tag": "0009_pet_stats",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792775543865,
+      "tag": "0010_task_recurrence",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792777640052,
+      "tag": "0011_pet_companions",
+      "breakpoints": true
     }
   ]
 }

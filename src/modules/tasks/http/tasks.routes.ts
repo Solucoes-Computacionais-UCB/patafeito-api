@@ -9,15 +9,18 @@ import { AppError } from '../../../shared/errors/app-error.js';
 import { recordSyncChange } from '../../sync/infrastructure/change-log.js';
 import { completeTask, isOverdue, type TaskCompletionResult } from '../application/complete-task.js';
 import { reopenTask } from '../application/reopen-task.js';
+import { checkRecurrence, recurrenceFields } from '../domain/recurrence.js';
 
 const difficulty = z.enum(['easy', 'medium', 'hard']);
-const createTaskInput = z.object({
+const taskFields = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().max(2000).nullable().optional(),
   difficulty,
   dueAt: z.string().datetime({ offset: true }).nullable().optional(),
+  ...recurrenceFields,
 });
-const updateTaskInput = createTaskInput.partial().refine((input) => Object.keys(input).length > 0, 'Informe ao menos um campo para atualizar.');
+const createTaskInput = taskFields.superRefine(checkRecurrence);
+const updateTaskInput = taskFields.partial().refine((input) => Object.keys(input).length > 0, 'Informe ao menos um campo para atualizar.').superRefine(checkRecurrence);
 const rescheduleInput = z.object({ dueAt: z.string().datetime({ offset: true }) });
 const idempotencyKey = z.string().uuid();
 const completeTaskInput = z.object({ completedAt: z.string().datetime({ offset: true }).optional() });
@@ -51,6 +54,9 @@ tasksRouter.post('/', async (req: AuthenticatedRequest, res) => {
     description: input.description,
     difficulty: input.difficulty,
     dueAt,
+    recurrence: input.recurrence,
+    recurrenceDay: input.recurrenceDay,
+    seriesId: input.seriesId,
     userId: req.userId!,
   }).returning();
   await recordSyncChange(db, { userId: req.userId!, entityType: 'task', entityId: task.id, changeType: 'upsert', version: task.version, data: task });

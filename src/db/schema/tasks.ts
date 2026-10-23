@@ -10,6 +10,12 @@ export const tasks = pgTable('tasks', {
   status: varchar('status', { length: 20 }).notNull().default('pending'),
   dueAt: timestamp('due_at', { withTimezone: true }),
   completedAt: timestamp('completed_at', { withTimezone: true }),
+  /** daily | weekly | monthly. Cada repetição é uma tarefa própria; o app gera a próxima. */
+  recurrence: varchar('recurrence', { length: 10 }),
+  /** Dia da semana (0 = domingo) nas semanais; dia do mês (1–31) nas mensais. */
+  recurrenceDay: integer('recurrence_day'),
+  /** Id da primeira tarefa da série, compartilhado por todas as repetições. */
+  seriesId: uuid('series_id'),
   version: integer('version').notNull().default(1),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
