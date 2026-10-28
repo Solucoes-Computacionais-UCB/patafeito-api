@@ -25,7 +25,9 @@ services:
     restart: 'no'
 
   api:
+    # Imagem local, construída pelo serviço `migrate`: nunca buscar no Docker Hub.
     image: patafeito-api:latest
+    pull_policy: never
     restart: unless-stopped
     env_file: .env
     depends_on:
