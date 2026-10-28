@@ -1,0 +1,39 @@
+# Produção: docker compose -f docker-compose.prod.yml up -d --build
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env
+    # Sem `ports`: o banco só é alcançável pela rede interna do compose.
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Roda as migrações uma vez e sai; a API só sobe se elas tiverem sucesso.
+  migrate:
+    build: .
+    image: patafeito-api:latest
+    command: ['node', 'dist/db/migrate.js']
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  api:
+    image: patafeito-api:latest
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # Só o nginx do host acessa a API; nada fica exposto direto na internet.
+    ports:
+      - '127.0.0.1:${API_HOST_PORT:-3000}:3000'
+
+volumes:
+  postgres_data:

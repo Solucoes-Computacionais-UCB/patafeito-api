@@ -19,6 +19,8 @@ const schema = z.object({
   METRICS_TOKEN: z.string().min(32).optional(),
   /** Swagger UI em `/docs`. Sem valor explícito, fica ligado fora de produção. */
   DOCS_ENABLED: z.enum(['true', 'false']).optional(),
+  /** Quantos proxies reversos confiáveis ficam na frente da API (1 com nginx). Define `req.ip` para o rate limit. */
+  TRUST_PROXY: z.coerce.number().int().min(0).default(0),
 }).superRefine((value, context) => {
   if (value.NODE_ENV === 'production') {
     if (value.JWT_ACCESS_SECRET === localAccessSecret) context.addIssue({ code: z.ZodIssueCode.custom, path: ['JWT_ACCESS_SECRET'], message: 'JWT_ACCESS_SECRET deve ser configurado em produção.' });

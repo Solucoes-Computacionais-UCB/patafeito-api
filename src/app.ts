@@ -20,6 +20,7 @@ import { AppError } from './shared/errors/app-error.js';
 
 export const app = express();
 app.disable('x-powered-by');
+if (env.TRUST_PROXY > 0) app.set('trust proxy', env.TRUST_PROXY);
 app.use(cors({ origin: env.CORS_ORIGIN }));
 app.use(requestId);
 app.use(securityHeaders);
