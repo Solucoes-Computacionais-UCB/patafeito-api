@@ -81,4 +81,21 @@ describe('account integration', () => {
     const remaining = (await request('/api/v1/tasks', { headers: authorization })).body.data as { id: string }[];
     expect(remaining.map((task) => task.id)).toEqual([pending.body.data.id]);
   });
+
+  integrationTest('exclui a conta com todos os dados e libera o e-mail', async () => {
+    const { email, tokens, authorization } = await register();
+    await request('/api/v1/pets/me', { method: 'POST', headers: authorization, body: JSON.stringify({ speciesId: 'mare', name: 'Maré' }) });
+    const task = await request('/api/v1/tasks', { method: 'POST', headers: authorization, body: JSON.stringify({ title: 'Feita', difficulty: 'easy' }) });
+    await request(`/api/v1/tasks/${task.body.data.id as string}/complete`, { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() }, body: '{}' });
+    await request('/api/v1/focus-sessions', { method: 'POST', headers: authorization, body: '{}' });
+
+    expect((await request('/api/v1/me', { method: 'DELETE', headers: authorization, body: JSON.stringify({ currentPassword: 'nope' }) })).response.status).toBe(403);
+    expect((await request('/api/v1/me', { method: 'DELETE', headers: authorization, body: JSON.stringify({ currentPassword: 'valid-password-123' }) })).response.status).toBe(204);
+
+    expect((await request('/api/v1/me', { headers: authorization })).response.status).toBe(404);
+    expect((await request('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email, password: 'valid-password-123' }) })).response.status).toBe(401);
+    expect((await request('/api/v1/auth/refresh', { method: 'POST', body: JSON.stringify({ refreshToken: tokens.refreshToken }) })).response.status).toBe(401);
+    const again = await request('/api/v1/auth/register', { method: 'POST', body: JSON.stringify({ email, password: 'valid-password-123', displayName: 'De novo' }) });
+    expect(again.response.status).toBe(201);
+  });
 });

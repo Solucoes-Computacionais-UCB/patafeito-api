@@ -241,4 +241,19 @@ describe('task completion integration', () => {
     expect(reopened.response.status).toBe(409);
     expect(reopened.body.error.code).toBe('COINS_ALREADY_SPENT');
   });
+
+  integrationTest('tarefa vencida aceita só reagendamento pelo sync', async () => {
+    const registration = await request('/api/v1/auth/register', { method: 'POST', body: JSON.stringify({ email: `overdue-${crypto.randomUUID()}@example.test`, password: 'valid-password-123', displayName: 'Vencida' }) });
+    const authorization = { authorization: `Bearer ${registration.body.data.tokens.accessToken as string}` };
+    const push = (operations: unknown[]) => request('/api/v1/sync/push', { method: 'POST', headers: authorization, body: JSON.stringify({ operations }) });
+    const taskId = crypto.randomUUID();
+    await push([{ opId: crypto.randomUUID(), type: 'task.create', resourceId: taskId, payload: { title: 'Atrasada', difficulty: 'easy', dueAt: new Date(Date.now() - 86_400_000).toISOString() } }]);
+
+    const edited = await push([{ opId: crypto.randomUUID(), type: 'task.update', resourceId: taskId, baseVersion: 1, payload: { title: 'Outro título' } }]);
+    expect(edited.body.data.results[0]).toMatchObject({ status: 'conflict', code: 'TASK_OVERDUE' });
+    const future = new Date(Date.now() + 86_400_000).toISOString();
+    const rescheduled = await push([{ opId: crypto.randomUUID(), type: 'task.update', resourceId: taskId, baseVersion: 1, payload: { dueAt: future } }]);
+    expect(rescheduled.body.data.results[0].status).toBe('applied');
+    expect(new Date(rescheduled.body.data.results[0].data.dueAt as string).toISOString()).toBe(future);
+  });
 });

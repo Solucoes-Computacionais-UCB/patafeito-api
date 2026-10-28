@@ -23,6 +23,7 @@ paths:
     post: { summary: Revoga o refresh token fornecido, responses: { '204': { description: Sessão encerrada } } }
   /me:
     get: { summary: Retorna a conta autenticada, security: [{ bearerAuth: [] }], responses: { '200': { description: 'Usuário { id, email, displayName }' } } }
+    delete: { summary: 'Exclui a conta e todos os dados do usuário de forma definitiva ({ currentPassword }); o e-mail fica livre', security: [{ bearerAuth: [] }], responses: { '204': { description: Conta excluída }, '403': { description: Senha atual incorreta } } }
     patch: { summary: 'Atualiza displayName e/ou email. Trocar o email exige currentPassword', security: [{ bearerAuth: [] }], responses: { '200': { description: Usuário atualizado }, '403': { description: Senha atual incorreta }, '409': { description: E-mail em uso } } }
   /me/password:
     post: { summary: 'Troca a senha ({ currentPassword, newPassword }), revoga as outras sessões e devolve tokens novos', security: [{ bearerAuth: [] }], responses: { '200': { description: Tokens novos }, '403': { description: Senha atual incorreta } } }
@@ -189,7 +190,7 @@ paths:
                       baseVersion: { type: integer, minimum: 1, description: 'Obrigatório em task.update' }
                       payload:
                         type: object
-                        description: 'task.complete aceita completedAt; focus.complete exige startedAt e finishedAt e aceita durationSeconds (300 a 7200, padrão 1500); o período precisa cobrir a duração e a recompensa é proporcional (20 XP e 4 moedas a cada 25 minutos); pet.feed não tem payload e custa 5 moedas'
+                        description: 'task.complete aceita completedAt; focus.complete exige startedAt e finishedAt e aceita durationSeconds (300 a 7200, padrão 1500); o período precisa cobrir a duração e a recompensa é proporcional (20 XP e 4 moedas a cada 25 minutos); pet.feed não tem payload e custa 5 moedas; em tarefa vencida, task.update só é aceito se mudar apenas dueAt para o futuro'
       responses:
         '200': { description: 'Resultado individual por operação, com status applied, duplicate, conflict ou rejected' }
   /sync/pull:

@@ -70,7 +70,9 @@ async function applyOperation(userId: string, operation: z.infer<typeof operatio
         const task = await tx.query.tasks.findFirst({ where: and(eq(tasks.id, operation.resourceId!), eq(tasks.userId, userId), isNull(tasks.deletedAt)) });
         if (!task) throw new AppError(404, 'TASK_NOT_FOUND', 'Tarefa não encontrada.');
         if (task.status !== 'pending') throw new AppError(409, 'TASK_NOT_PENDING', 'Uma tarefa concluída não pode ser alterada.');
-        if (isOverdue(task)) throw new AppError(409, 'TASK_OVERDUE', 'Uma tarefa vencida só pode ser excluída ou reagendada.');
+        // Vencida: só aceita reagendar, isto é, mudar apenas o prazo para uma data futura.
+        const reschedule = Object.keys(input).every((key) => key === 'dueAt') && !!input.dueAt && new Date(input.dueAt).getTime() > Date.now();
+        if (isOverdue(task) && !reschedule) throw new AppError(409, 'TASK_OVERDUE', 'Uma tarefa vencida só pode ser excluída ou reagendada.');
         if (task.version !== operation.baseVersion) result = { opId: operation.opId, status: 'conflict', data: taskData(task), reason: 'A tarefa foi alterada em outro dispositivo.' };
         else {
           const [updated] = await tx.update(tasks).set({ ...input, dueAt: input.dueAt === undefined ? undefined : input.dueAt === null ? null : new Date(input.dueAt), version: sql`${tasks.version} + 1`, updatedAt: new Date() })

@@ -25,6 +25,7 @@ const updateProfileInput = z.object({
 }).refine((input) => input.displayName !== undefined || input.email !== undefined, 'Informe nome ou e-mail para atualizar.');
 const changePasswordInput = z.object({ currentPassword: z.string(), newPassword: password });
 const resetProgressInput = z.object({ currentPassword: z.string() });
+const deleteAccountInput = z.object({ currentPassword: z.string() });
 
 const publicUser = { id: users.id, email: users.email, displayName: users.displayName };
 
@@ -46,6 +47,26 @@ accountRouter.get('/', async (req: AuthenticatedRequest, res) => {
 });
 
 /** Trocar o nome é livre; trocar o e-mail, que é o login, pede a senha atual. */
+/**
+ * Exclui a conta e todos os dados do usuário de forma definitiva (LGPD).
+ * As tabelas sem ON DELETE CASCADE são limpas antes; as demais caem junto com o usuário.
+ */
+accountRouter.delete('/', async (req: AuthenticatedRequest, res) => {
+  const { currentPassword } = deleteAccountInput.parse(req.body ?? {});
+  const userId = req.userId!;
+  await verifyPassword(userId, currentPassword);
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${userId}))`);
+    await tx.delete(focusSessions).where(eq(focusSessions.userId, userId));
+    await tx.delete(inventory).where(eq(inventory.userId, userId));
+    await tx.delete(rewardLedger).where(eq(rewardLedger.userId, userId));
+    await tx.delete(tasks).where(eq(tasks.userId, userId));
+    await tx.delete(pets).where(eq(pets.userId, userId));
+    await tx.delete(users).where(eq(users.id, userId));
+  });
+  res.status(204).end();
+});
+
 accountRouter.patch('/', async (req: AuthenticatedRequest, res) => {
   const input = updateProfileInput.parse(req.body);
   const userId = req.userId!;

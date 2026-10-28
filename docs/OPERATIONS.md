@@ -19,6 +19,8 @@ pg_restore --clean --if-exists --no-owner --dbname="$DATABASE_URL" patafeito-AAA
 
 Teste periodicamente a restauração em um banco isolado. Defina retenção, criptografia e local externo ao banco de produção conforme a política da equipe.
 
+`DELETE /api/v1/me` apaga a conta e os dados do usuário de forma definitiva, mas os backups anteriores ainda os contêm. A retenção dos backups precisa constar na política de privacidade (LGPD). Ao restaurar um backup, contas excluídas depois dele voltam a existir e devem ser apagadas de novo.
+
 ## Sincronização
 
 `sync_changes` é um log necessário para clientes offline. Não execute limpeza automática sem rastrear o cursor de cada dispositivo: apagar mudanças antes de todos os clientes avançarem pode causar perda de sincronização. Enquanto essa política não existir, monitore o crescimento da tabela e faça compactação planejada com uma nova sincronização completa dos clientes.

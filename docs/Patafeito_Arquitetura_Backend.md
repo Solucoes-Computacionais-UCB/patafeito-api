@@ -1,8 +1,8 @@
 # Patafeito — Arquitetura do Backend
 
-Documento técnico de arquitetura • versão 1.1 • 15/10/2026
+Documento técnico de arquitetura • versão 1.2 • 27/10/2026
 
-Status: arquitetura-alvo; Fases 1 e 2 implementadas para o núcleo atual. Base: Roteiro do Projeto de Desenvolvimento de Solução Computacional (43 páginas).
+Status: arquitetura-alvo com o núcleo do MVP implementado (fases 1, 2, 3 e 5 concluídas no escopo de código; 0 e 4 parciais — ver seção 10). Os blocos “Situação em 27/10/2026” indicam onde a implementação difere do texto. Base: Roteiro do Projeto de Desenvolvimento de Solução Computacional (43 páginas).
 
 Convenção: \[BASE\] = previsto no roteiro; \[PROPOSTA\] = detalhamento técnico recomendado; \[DECIDIR\] = item em aberto.
 
@@ -70,6 +70,8 @@ Convenção: \[BASE\] = previsto no roteiro; \[PROPOSTA\] = detalhamento técnic
 >
 > jobs/ db/{client,schema,relations}/ drizzle/ drizzle.config.ts tests/{unit,integration,contract,e2e}/
 
+**Situação em 27/10/2026:** `shared/` tem `auth`, `errors`, `http` e `observability`. Os módulos usam as camadas conforme a necessidade (`http` sempre; `application`/`domain`/`infrastructure` quando há regra ou acesso compartilhado); as consultas ficam nas rotas e nos serviços, sem repositórios dedicados. Existe também o módulo `shop/`; `social/` e `jobs/` estão vazios. Em `tests/` só há `unit` e `integration`.
+
 ### 2.2 Dependências recomendadas
 
 | Área            | Escolha / critério                                                          |
@@ -116,6 +118,8 @@ Convenção: \[BASE\] = previsto no roteiro; \[PROPOSTA\] = detalhamento técnic
 | device_tokens    | id, user_id, platform, fcm_token, last_seen_at                                                                |
 | sync_operations  | op_id UUID UNIQUE, user_id, device_id, result, applied_at                                                     |
 | outbox_events    | id, topic, payload, status, attempts, next_attempt_at                                                         |
+
+**Situação em 27/10/2026:** a recorrência foi implementada com colunas em `tasks` (`recurrence`, `recurrence_day`, `series_id`; cada repetição é uma tarefa própria), no lugar de `task_occurrences`/`recurrence_rules`. O pet usa `energy` em vez de `health`. Também existem `shop_items`, `inventory`, `active_boosts`, `pet_companions`, `notifications`, `idempotency_operations` e `sync_changes`. Ainda não existem `device_tokens` e `outbox_events` (sem push/worker), nem restrições `CHECK` no banco: status, dificuldade e a faixa 0–100 são validados só na aplicação.
 
 ### 4.1 Integridade e índices
 
@@ -247,9 +251,11 @@ A transação, por si só, não elimina corridas: fazer atualização condiciona
 | RN12      | Cosméticos exigem desbloqueio/compra                          | Controle centralizado no servidor                |
 | RN14      | Até 5 tarefas especiais por semana; sem XP direto             | Restringir por usuário + semana local            |
 
+**Situação em 27/10/2026:** implementadas RN01, RN03 (thresholds 100/300/600…), RN04, RN05 (pausa longa configurável no app), RN06 (série com id determinístico por data), RN08 (inclusive reagendamento offline via `task.update` só de prazo) e RN12. RN09 valida 2–15 caracteres por unidade de código, não por grapheme. **Não implementadas:** RN02, RN07 (o escudo protege a sequência, mas não há bônus), RN11/RN13 e RN14 (não há tarefa especial).
+
 ## 6. Contrato HTTP da API v1
 
-\[PROPOSTA\] Exemplos de endpoints, não implementação existente. Respostas padronizadas {data, meta} e erros {error:{code,message,details,requestId}}. Autorização por usuário, paginação cursor-based para históricos.
+\[PROPOSTA\] Rotas planejadas; o que já existe está no bloco de situação abaixo e em `docs/openapi.yaml`. Respostas padronizadas {data} (`meta` ainda não é usado) e erros {error:{code,message,details,requestId}}. Autorização por usuário, paginação cursor-based para históricos.
 
 | Método           | Rota                                       | Objetivo                 |
 |------------------|--------------------------------------------|--------------------------|
@@ -272,6 +278,8 @@ A transação, por si só, não elimina corridas: fazer atualização condiciona
 | POST             | /devices                                   | Registrar push token     |
 | POST             | /sync/push                                 | Enviar mutações offline  |
 | GET              | /sync/pull?cursor=                         | Receber mudanças         |
+
+**Situação em 27/10/2026:** o contrato vigente é o de `docs/openapi.yaml`. Da tabela acima, ainda **não existem** `POST /pets/me/interactions` (alimentar existe via `POST /inventory/use` e `pet.feed` no sync), `GET /rewards/ledger` (há `GET /rewards/balance`), `GET /stats/overview`, `GET/POST /friends` e `POST /devices`. `DELETE /me` exclui a conta de forma definitiva, sem período de carência. Rotas extras já implementadas: `/auth/logout`, `/me/password`, `/me/reset-progress`, `/pets/me/switch`, `/pets/me/history`, `/tasks/:id/reopen`, `/inventory/use`, `/inventory/boosts` e `/notifications`.
 
 ### 6.1 Exemplo de conclusão idempotente
 
@@ -334,19 +342,21 @@ Fluxo: autenticar → validar posse e estado → verificar idempotência e prazo
 | Resiliência | Reenvio de operação, rede oscilante, token expirado, migração, worker duplicado     |
 | Segurança   | IDOR (acesso a tarefa de outro usuário), brute force, injection, limite de payload  |
 
+**Situação em 27/10/2026:** há testes unitários (XP, moedas, níveis, status do pet, recorrência, foco) e de integração com PostgreSQL real (conta, tarefas, sync, foco, loja, pet), executados na CI. Faltam testes de contrato, E2E, resiliência e segurança, e a cobertura ainda não é medida.
+
 Meta de cobertura de domínio/serviços de pelo menos 80% está no RNF011. Aceite não é só cobertura: fluxos críticos precisam de testes verdes com banco real de teste.
 
 ## 10. Implantação e plano de entrega
 
 - Fase 0 — definir regras incompletas e políticas de offline/iOS; alinhar contrato e entidades. **Parcial:** regras econômicas e sync ainda aguardam decisão.
 
-- Fase 1 — fundação: repositório, CI, PostgreSQL, **Drizzle ORM/Kit, schema e migrações versionadas**, auth, healthchecks, OpenAPI. **Concluída:** CI executa lint, typecheck, migrações e testes contra PostgreSQL; há `/health`, `/ready`, `docs/openapi.yaml` e refresh token rotativo/revogável.
+- Fase 1 — fundação: repositório, CI, PostgreSQL, **Drizzle ORM/Kit, schema e migrações versionadas**, auth, healthchecks, OpenAPI. **Concluída:** CI (`.github/workflows/ci.yml`) executa lint, typecheck, migrações, `drizzle-kit check`, testes contra PostgreSQL e `npm audit`; há `/health`, `/ready`, `docs/openapi.yaml` e refresh token rotativo/revogável.
 
 - Fase 2 — tarefas, pet, regras XP, ledger, transações e testes. **Concluída para o escopo definido:** CRUD de tarefas, RN01, ledger, transação de conclusão, idempotência persistida, progressão de nível e testes unitários/integração.
 
-- Fase 3 — sessões de foco, loja, inventário, notificações. **Concluída para o escopo de MVP:** sessões Pomodoro de 25 minutos possuem recompensa idempotente de 20 XP e 4 moedas; tarefas rendem 2/4/8 moedas por dificuldade; catálogo cosmético, compra transacional e inventário/equipamento estão implementados; notificações de conclusão são persistidas e o app controla seu estado de lida/não lida. Não há push nem worker no backend.
+- Fase 3 — sessões de foco, loja, inventário, notificações. **Concluída para o escopo de MVP:** sessões de foco de 5 a 120 minutos (padrão 25) têm recompensa idempotente de 20 XP e 4 moedas a cada 25 minutos; tarefas rendem 1/2/3 moedas por dificuldade; catálogo cosmético, compra transacional e inventário/equipamento estão implementados; notificações de conclusão são persistidas e o app controla seu estado de lida/não lida. Não há push nem worker no backend.
 
-- Fase 4 — sincronização offline e recuperação; ranking/social apenas após fluxo central estável. **Parcial:** `sync/push` e `sync/pull` oferecem snapshot inicial, cursor por usuário, idempotência de operação, conflitos por versão e tombstones para tarefas; notificações também sincronizam o estado de leitura. A fila SQLite, retry/backoff e UI de conflitos pertencem ao app.
+- Fase 4 — sincronização offline e recuperação; ranking/social apenas após fluxo central estável. **Parcial:** `sync/push` e `sync/pull` oferecem snapshot inicial, cursor por usuário, idempotência de operação, conflitos por versão e tombstones para tarefas; notificações também sincronizam o estado de leitura. Uma tarefa vencida aceita `task.update` apenas para reagendar. No app, a fila SQLite e o retry/backoff estão implementados; a UI de resolução de conflitos, não.
 
 - Fase 5 — observabilidade, segurança, backup, carga e demonstração do MVP. **Concluída no escopo de código:** logs JSON com `requestId`, métricas Prometheus protegidas, rate limiting, cabeçalhos de segurança, CI com PostgreSQL real e runbook de deploy/backup/restauração. Hospedagem, credenciais, execução do backup e teste de carga exigem a infraestrutura de produção.
 
@@ -354,7 +364,7 @@ Meta de cobertura de domínio/serviços de pelo menos 80% está no RNF011. Aceit
 
 - Como separar XP total, XP do pet e moedas gastáveis? O documento mistura custo em XP e moedas virtuais.
 
-  - Implementação atual: `xp_total` é o XP acumulado do pet; moedas são apuradas pelo `reward_ledger`. Tarefas rendem 2/4/8 e Pomodoros rendem 4 moedas; compras inserem débitos no ledger. O nível usa thresholds incrementais: nível 2 com 100 XP, nível 3 com 300 XP, nível 4 com 600 XP.
+  - Implementação atual: `xp_total` é o XP acumulado do pet; moedas são apuradas pelo `reward_ledger`. Tarefas rendem 1/2/3 e cada ciclo de 25 minutos de foco rende 4 moedas (ciclos de 5 a 120 minutos rendem proporcionalmente); compras inserem débitos no ledger. O nível usa thresholds incrementais: nível 2 com 100 XP, nível 3 com 300 XP, nível 4 com 600 XP.
 
 - Quais valores exatos de bônus de streak, penalidades, recuperação e thresholds de nível? O MVP fixa a sessão Pomodoro integral em 25 minutos e 20 XP, sujeito à revisão de produto.
 
@@ -366,4 +376,4 @@ Meta de cobertura de domínio/serviços de pelo menos 80% está no RNF011. Aceit
 
 ## 12. Rastreabilidade
 
-Fonte principal: roteiro fornecido pela equipe, em especial pp. 2–10 (requisitos e regras), pp. 25–30 (arquitetura, componentes, tecnologias e infraestrutura), pp. 31–35 (dados) e pp. 11–24 (interfaces). Este documento descreve arquitetura-alvo proposta; não atesta implementação.
+Fonte principal: roteiro fornecido pela equipe, em especial pp. 2–10 (requisitos e regras), pp. 25–30 (arquitetura, componentes, tecnologias e infraestrutura), pp. 31–35 (dados) e pp. 11–24 (interfaces). Este documento descreve a arquitetura-alvo; o que já está implementado aparece na seção 10 e nos blocos “Situação”. O contrato vigente é `docs/openapi.yaml`.
