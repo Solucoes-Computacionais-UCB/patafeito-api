@@ -4,6 +4,10 @@ set -euo pipefail
 
 compose() { docker compose -f docker-compose.prod.yml "$@"; }
 
+# Mesma porta que o compose lê do .env (padrão 3000).
+API_HOST_PORT="$(sed -n 's/^API_HOST_PORT=//p' .env | tail -n 1)"
+API_HOST_PORT="${API_HOST_PORT:-3000}"
+
 # Backup antes de migrar, se o banco já estiver no ar. Mantém os 14 mais recentes.
 if [ -n "$(compose ps -q postgres 2>/dev/null)" ]; then
   mkdir -p "$HOME/backups"
@@ -15,7 +19,7 @@ fi
 compose up -d --build --remove-orphans
 
 for _ in $(seq 1 30); do
-  if curl -fsS "http://127.0.0.1:${API_HOST_PORT:-3000}/ready" > /dev/null; then
+  if curl -fsS "http://127.0.0.1:${API_HOST_PORT}/ready" > /dev/null; then
     echo 'API pronta.'
     docker image prune -f > /dev/null
     exit 0
