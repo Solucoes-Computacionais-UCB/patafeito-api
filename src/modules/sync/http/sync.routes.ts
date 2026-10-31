@@ -13,24 +13,24 @@ import { AppError } from '../../../shared/errors/app-error.js';
 import { recordSyncChange } from '../infrastructure/change-log.js';
 import { completeTask } from '../../tasks/application/complete-task.js';
 import { reopenTask } from '../../tasks/application/reopen-task.js';
-import { MAX_FOCUS_SECONDS, MIN_FOCUS_SECONDS, recordOfflineFocusSession } from '../../focus/application/complete-focus-session.js';
+import { FOCUS_MODES, MAX_FOCUS_SECONDS, MIN_FOCUS_SECONDS, recordOfflineFocusSession } from '../../focus/application/complete-focus-session.js';
 import { feedPet } from '../../pets/application/feed-pet.js';
-import { checkRecurrence, recurrenceFields } from '../../tasks/domain/recurrence.js';
+import { pamperPet } from '../../pets/application/interact-pet.js';
+import { refreshPetState, resetOverdueOnReschedule } from '../../pets/application/pet-state.js';
+import { markAllNotificationsRead } from '../../notifications/application/read-all.js';
+import { assertSpecialQuota } from '../../tasks/application/special-quota.js';
+import { createTaskInput as taskCreate, updateTaskInput as taskUpdate } from '../../tasks/domain/task-input.js';
 
-const difficulty = z.enum(['easy', 'medium', 'hard']);
-const taskFields = z.object({ title: z.string().trim().min(1).max(200), description: z.string().trim().max(2000).nullable().optional(), difficulty, dueAt: z.string().datetime({ offset: true }).nullable().optional(), ...recurrenceFields });
-const taskCreate = taskFields.superRefine(checkRecurrence);
-const taskUpdate = taskFields.partial().refine((value) => Object.keys(value).length > 0, 'Informe campos para atualizar.').superRefine(checkRecurrence);
 const taskComplete = z.object({ completedAt: z.string().datetime({ offset: true }).optional() });
-const focusComplete = z.object({ startedAt: z.string().datetime({ offset: true }), finishedAt: z.string().datetime({ offset: true }), durationSeconds: z.number().int().min(MIN_FOCUS_SECONDS).max(MAX_FOCUS_SECONDS).optional() });
+const focusComplete = z.object({ startedAt: z.string().datetime({ offset: true }), finishedAt: z.string().datetime({ offset: true }), durationSeconds: z.number().int().min(MIN_FOCUS_SECONDS).max(MAX_FOCUS_SECONDS).optional(), mode: z.enum(FOCUS_MODES).optional(), taskId: z.string().uuid().nullable().optional() });
 const operationInput = z.object({
   opId: z.string().uuid(),
-  type: z.enum(['task.create', 'task.update', 'task.delete', 'task.complete', 'task.reopen', 'notification.read', 'inventory.equip', 'focus.complete', 'pet.feed']),
+  type: z.enum(['task.create', 'task.update', 'task.delete', 'task.complete', 'task.reopen', 'notification.read', 'inventory.equip', 'focus.complete', 'pet.feed', 'pet.interact', 'notification.read_all']),
   resourceId: z.string().uuid().optional(),
   baseVersion: z.coerce.number().int().positive().optional(),
   payload: z.record(z.unknown()).default({}),
 }).superRefine((value, context) => {
-  if (value.type !== 'task.create' && !value.resourceId) context.addIssue({ code: z.ZodIssueCode.custom, path: ['resourceId'], message: 'resourceId é obrigatório para esta operação.' });
+  if (value.type !== 'task.create' && value.type !== 'notification.read_all' && !value.resourceId) context.addIssue({ code: z.ZodIssueCode.custom, path: ['resourceId'], message: 'resourceId é obrigatório para esta operação.' });
   if (value.type === 'task.update' && !value.baseVersion) context.addIssue({ code: z.ZodIssueCode.custom, path: ['baseVersion'], message: 'baseVersion é obrigatória para editar uma tarefa.' });
 });
 const pushInput = z.object({ operations: z.array(operationInput).min(1).max(50) });
@@ -55,6 +55,10 @@ async function applyOperation(userId: string, operation: z.infer<typeof operatio
     try {
       if (operation.type === 'task.create') {
         const input = taskCreate.parse(operation.payload);
+        if (input.kind === 'special') {
+          const existing = await tx.query.tasks.findFirst({ where: and(eq(tasks.id, operation.resourceId!), eq(tasks.userId, userId)) });
+          if (!existing) await assertSpecialQuota(tx, userId);
+        }
         // O app envia o id gerado no aparelho em `resourceId`, para que operações seguintes
         // do mesmo lote (concluir, editar) já referenciem a tarefa certa.
         const [created] = await tx.insert(tasks).values({ ...input, id: operation.resourceId, dueAt: input.dueAt ? new Date(input.dueAt) : null, userId })
@@ -73,11 +77,13 @@ async function applyOperation(userId: string, operation: z.infer<typeof operatio
         // Vencida: só aceita reagendar, isto é, mudar apenas o prazo para uma data futura.
         const reschedule = Object.keys(input).every((key) => key === 'dueAt') && !!input.dueAt && new Date(input.dueAt).getTime() > Date.now();
         if (isOverdue(task) && !reschedule) throw new AppError(409, 'TASK_OVERDUE', 'Uma tarefa vencida só pode ser excluída ou reagendada.');
+        if (task.kind === 'special' && input.recurrence) throw new AppError(409, 'SPECIAL_NOT_RECURRENT', 'Uma tarefa especial não pode ser recorrente.');
         if (task.version !== operation.baseVersion) result = { opId: operation.opId, status: 'conflict', data: taskData(task), reason: 'A tarefa foi alterada em outro dispositivo.' };
         else {
           const [updated] = await tx.update(tasks).set({ ...input, dueAt: input.dueAt === undefined ? undefined : input.dueAt === null ? null : new Date(input.dueAt), version: sql`${tasks.version} + 1`, updatedAt: new Date() })
             .where(and(eq(tasks.id, task.id), eq(tasks.version, operation.baseVersion))).returning();
           if (!updated) throw new AppError(409, 'SYNC_CONFLICT', 'A tarefa foi alterada em outro dispositivo.');
+          if (isOverdue(task) && reschedule) await resetOverdueOnReschedule(tx, userId, task.id);
           await recordSyncChange(tx, { userId, entityType: 'task', entityId: updated.id, changeType: 'upsert', version: updated.version, data: taskData(updated) });
           result = { opId: operation.opId, status: 'applied', data: taskData(updated) };
         }
@@ -98,11 +104,18 @@ async function applyOperation(userId: string, operation: z.infer<typeof operatio
         result = { opId: operation.opId, status: 'applied', data: { task: taskData(reopened.task), refunded: reopened.refunded, pet: reopened.pet } };
       } else if (operation.type === 'focus.complete') {
         const input = focusComplete.parse(operation.payload);
-        const completion = await recordOfflineFocusSession(tx, { userId, sessionId: operation.resourceId!, startedAt: new Date(input.startedAt), finishedAt: new Date(input.finishedAt), durationSeconds: input.durationSeconds });
+        const completion = await recordOfflineFocusSession(tx, { userId, sessionId: operation.resourceId!, startedAt: new Date(input.startedAt), finishedAt: new Date(input.finishedAt), durationSeconds: input.durationSeconds, mode: input.mode, taskId: input.taskId });
         result = { opId: operation.opId, status: 'applied', data: { session: completion.session, rewards: completion.rewards, pet: completion.pet } };
       } else if (operation.type === 'pet.feed') {
         const fed = await feedPet(tx, { userId, feedId: operation.resourceId! });
         result = { opId: operation.opId, status: 'applied', data: fed };
+      } else if (operation.type === 'pet.interact') {
+        const { type } = z.object({ type: z.string() }).parse(operation.payload);
+        // Brincar, curar e alimentar pagos saíram: operações antigas na fila são recusadas sem travar o lote.
+        if (type !== 'pamper') throw new AppError(404, 'INTERACTION_REMOVED', 'Este cuidado não existe mais. Use os itens da mochila.');
+        result = { opId: operation.opId, status: 'applied', data: await pamperPet(tx, { userId }) };
+      } else if (operation.type === 'notification.read_all') {
+        result = { opId: operation.opId, status: 'applied', data: await markAllNotificationsRead(tx, userId) };
       } else if (operation.type === 'notification.read') {
         const read = z.object({ read: z.boolean() }).parse(operation.payload);
         const [notification] = await tx.update(notifications).set({ readAt: read.read ? new Date() : null }).where(and(eq(notifications.id, operation.resourceId!), eq(notifications.userId, userId))).returning();
@@ -148,6 +161,8 @@ syncRouter.post('/push', async (req: AuthenticatedRequest, res) => {
 syncRouter.get('/pull', async (req: AuthenticatedRequest, res) => {
   const { cursor } = pullQuery.parse(req.query);
   const userId = req.userId!;
+  // Penalidades pendentes (RN02, RN11) viram mudanças do pet antes de montar a resposta.
+  await db.transaction((tx) => refreshPetState(tx, userId));
   if (cursor === undefined) {
     const [taskItems, petItems, inventoryItems, notificationItems] = await Promise.all([
       db.query.tasks.findMany({ where: and(eq(tasks.userId, userId), isNull(tasks.deletedAt)) }),

@@ -18,6 +18,8 @@ export const shopItems = pgTable('shop_items', {
   /** Categoria na loja: food, power, background ou accessory. Itens equipáveis trocam um por categoria. */
   slot: varchar('slot', { length: 30 }).notNull(),
   priceCoins: integer('price_coins').notNull(),
+  /** RN12: nível do pet a partir do qual o item pode ser comprado. */
+  minLevel: integer('min_level').notNull().default(1),
   /** Consumíveis acumulam quantidade e somem ao usar; os demais são comprados uma vez. */
   consumable: boolean('consumable').notNull().default(false),
   effect: jsonb('effect').$type<ItemEffect>().notNull().default({ type: 'none' }),

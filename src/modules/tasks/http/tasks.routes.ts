@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, ilike, isNull, lt, or, sql } from 'drizzle-orm';
 import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../../../db/client.js';
@@ -9,24 +9,26 @@ import { AppError } from '../../../shared/errors/app-error.js';
 import { recordSyncChange } from '../../sync/infrastructure/change-log.js';
 import { completeTask, isOverdue, type TaskCompletionResult } from '../application/complete-task.js';
 import { reopenTask } from '../application/reopen-task.js';
-import { checkRecurrence, recurrenceFields } from '../domain/recurrence.js';
+import { assertSpecialQuota } from '../application/special-quota.js';
+import { resetOverdueOnReschedule } from '../../pets/application/pet-state.js';
+import { category, createTaskInput, updateTaskInput } from '../domain/task-input.js';
 
-const difficulty = z.enum(['easy', 'medium', 'hard']);
-const taskFields = z.object({
-  title: z.string().trim().min(1).max(200),
-  description: z.string().trim().max(2000).nullable().optional(),
-  difficulty,
-  dueAt: z.string().datetime({ offset: true }).nullable().optional(),
-  ...recurrenceFields,
+const listQuery = z.object({
+  q: z.string().trim().max(100).optional(),
+  status: z.enum(['pending', 'completed', 'overdue']).optional(),
+  category: category.optional(),
 });
-const createTaskInput = taskFields.superRefine(checkRecurrence);
-const updateTaskInput = taskFields.partial().refine((input) => Object.keys(input).length > 0, 'Informe ao menos um campo para atualizar.').superRefine(checkRecurrence);
 const rescheduleInput = z.object({ dueAt: z.string().datetime({ offset: true }) });
 const idempotencyKey = z.string().uuid();
 const completeTaskInput = z.object({ completedAt: z.string().datetime({ offset: true }).optional() });
 
 export const tasksRouter = Router();
 tasksRouter.use(requireAuth);
+
+/** Escapa os curingas do LIKE para buscar o texto literal. */
+function likePattern(text: string) {
+  return `%${text.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+}
 
 function taskIdParam(value: unknown) {
   return z.string().uuid().parse(value);
@@ -39,8 +41,20 @@ async function ownedTask(taskId: string, userId: string) {
 }
 
 tasksRouter.get('/', async (req: AuthenticatedRequest, res) => {
+  const query = listQuery.parse(req.query);
+  const now = new Date();
+  const statusFilter = query.status === 'completed' ? eq(tasks.status, 'completed')
+    : query.status === 'overdue' ? and(eq(tasks.status, 'pending'), lt(tasks.dueAt, now))
+      : query.status === 'pending' ? and(eq(tasks.status, 'pending'), or(isNull(tasks.dueAt), gte(tasks.dueAt, now)))
+        : undefined;
   const items = await db.query.tasks.findMany({
-    where: and(eq(tasks.userId, req.userId!), isNull(tasks.deletedAt)),
+    where: and(
+      eq(tasks.userId, req.userId!),
+      isNull(tasks.deletedAt),
+      query.q ? ilike(tasks.title, likePattern(query.q)) : undefined,
+      query.category ? eq(tasks.category, query.category) : undefined,
+      statusFilter,
+    ),
     orderBy: [desc(tasks.createdAt)],
   });
   res.json({ data: items });
@@ -49,17 +63,24 @@ tasksRouter.get('/', async (req: AuthenticatedRequest, res) => {
 tasksRouter.post('/', async (req: AuthenticatedRequest, res) => {
   const input = createTaskInput.parse(req.body);
   const dueAt = input.dueAt === undefined ? undefined : input.dueAt === null ? null : new Date(input.dueAt);
-  const [task] = await db.insert(tasks).values({
-    title: input.title,
-    description: input.description,
-    difficulty: input.difficulty,
-    dueAt,
-    recurrence: input.recurrence,
-    recurrenceDay: input.recurrenceDay,
-    seriesId: input.seriesId,
-    userId: req.userId!,
-  }).returning();
-  await recordSyncChange(db, { userId: req.userId!, entityType: 'task', entityId: task.id, changeType: 'upsert', version: task.version, data: task });
+  const task = await db.transaction(async (tx) => {
+    if (input.kind === 'special') await assertSpecialQuota(tx, req.userId!);
+    const [created] = await tx.insert(tasks).values({
+      title: input.title,
+      description: input.description,
+      difficulty: input.difficulty,
+      category: input.category,
+      estimatedMinutes: input.estimatedMinutes,
+      kind: input.kind,
+      dueAt,
+      recurrence: input.recurrence,
+      recurrenceDay: input.recurrenceDay,
+      seriesId: input.seriesId,
+      userId: req.userId!,
+    }).returning();
+    await recordSyncChange(tx, { userId: req.userId!, entityType: 'task', entityId: created.id, changeType: 'upsert', version: created.version, data: created });
+    return created;
+  });
   res.status(201).json({ data: task });
 });
 
@@ -72,6 +93,7 @@ tasksRouter.patch('/:id', async (req: AuthenticatedRequest, res) => {
   const task = await ownedTask(taskIdParam(req.params.id), req.userId!);
   if (task.status !== 'pending') throw new AppError(409, 'TASK_NOT_PENDING', 'Uma tarefa concluída não pode ser alterada.');
   if (isOverdue(task)) throw new AppError(409, 'TASK_OVERDUE', 'Uma tarefa vencida só pode ser excluída ou reagendada.');
+  if (task.kind === 'special' && input.recurrence) throw new AppError(422, 'SPECIAL_NOT_RECURRENT', 'Uma tarefa especial não pode ser recorrente.');
   const [updated] = await db.update(tasks).set({
     ...input,
     dueAt: input.dueAt === undefined ? undefined : input.dueAt === null ? null : new Date(input.dueAt),
@@ -95,9 +117,13 @@ tasksRouter.post('/:id/reschedule', async (req: AuthenticatedRequest, res) => {
   if (dueAt.getTime() <= Date.now()) throw new AppError(422, 'INVALID_DUE_DATE', 'A nova data deve estar no futuro.');
   const task = await ownedTask(taskIdParam(req.params.id), req.userId!);
   if (task.status !== 'pending') throw new AppError(409, 'TASK_NOT_PENDING', 'Uma tarefa concluída não pode ser reagendada.');
-  const [updated] = await db.update(tasks).set({ dueAt, version: sql`${tasks.version} + 1`, updatedAt: new Date() })
-    .where(and(eq(tasks.id, task.id), eq(tasks.userId, req.userId!))).returning();
-  await recordSyncChange(db, { userId: req.userId!, entityType: 'task', entityId: updated.id, changeType: 'upsert', version: updated.version, data: updated });
+  const updated = await db.transaction(async (tx) => {
+    const [rescheduled] = await tx.update(tasks).set({ dueAt, version: sql`${tasks.version} + 1`, updatedAt: new Date() })
+      .where(and(eq(tasks.id, task.id), eq(tasks.userId, req.userId!))).returning();
+    if (isOverdue(task)) await resetOverdueOnReschedule(tx, req.userId!, task.id);
+    await recordSyncChange(tx, { userId: req.userId!, entityType: 'task', entityId: rescheduled.id, changeType: 'upsert', version: rescheduled.version, data: rescheduled });
+    return rescheduled;
+  });
   res.json({ data: updated });
 });
 

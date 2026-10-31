@@ -13,21 +13,24 @@ import { rewardLedger } from '../../../db/schema/reward-ledger.js';
 import { tasks } from '../../../db/schema/tasks.js';
 import { users } from '../../../db/schema/users.js';
 import { requireAuth, type AuthenticatedRequest } from '../../../shared/auth/middleware.js';
+import { safeText } from '../../../shared/validation/sanitize.js';
 import { AppError } from '../../../shared/errors/app-error.js';
 import { recordSyncChange } from '../../sync/infrastructure/change-log.js';
 import { issueTokens } from './identity.routes.js';
+import { handleSchema } from '../../social/domain/handle.js';
 
 const password = z.string().min(8).max(128);
 const updateProfileInput = z.object({
-  displayName: z.string().trim().min(2).max(80).optional(),
+  displayName: safeText(2, 80).optional(),
   email: z.string().trim().email().optional(),
+  handle: handleSchema.optional(),
   currentPassword: z.string().optional(),
-}).refine((input) => input.displayName !== undefined || input.email !== undefined, 'Informe nome ou e-mail para atualizar.');
+}).refine((input) => input.displayName !== undefined || input.email !== undefined || input.handle !== undefined, 'Informe nome, e-mail ou @usuário para atualizar.');
 const changePasswordInput = z.object({ currentPassword: z.string(), newPassword: password });
 const resetProgressInput = z.object({ currentPassword: z.string() });
 const deleteAccountInput = z.object({ currentPassword: z.string() });
 
-const publicUser = { id: users.id, email: users.email, displayName: users.displayName };
+const publicUser = { id: users.id, email: users.email, displayName: users.displayName, handle: users.handle };
 
 export const accountRouter = Router();
 accountRouter.use(requireAuth);
@@ -78,9 +81,15 @@ accountRouter.patch('/', async (req: AuthenticatedRequest, res) => {
     const taken = await db.query.users.findFirst({ where: and(eq(users.email, input.email!), ne(users.id, userId)) });
     if (taken) throw new AppError(409, 'EMAIL_IN_USE', 'Este e-mail já está em uso.');
   }
+  const handleChanged = input.handle !== undefined && input.handle !== current.handle;
+  if (handleChanged) {
+    const taken = await db.query.users.findFirst({ columns: { id: true }, where: and(eq(users.handle, input.handle!), ne(users.id, userId)) });
+    if (taken) throw new AppError(409, 'HANDLE_IN_USE', 'Este @usuário já está em uso.');
+  }
   const [user] = await db.update(users).set({
     displayName: input.displayName,
     email: emailChanged ? input.email : undefined,
+    handle: handleChanged ? input.handle : undefined,
   }).where(eq(users.id, userId)).returning(publicUser);
   res.json({ data: user });
 });

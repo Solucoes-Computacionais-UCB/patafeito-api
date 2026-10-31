@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { Transaction } from '../../../db/client.js';
 import { pets } from '../../../db/schema/pets.js';
 import { rewardLedger } from '../../../db/schema/reward-ledger.js';
@@ -8,13 +8,21 @@ import { FEED_BOOST, FEED_COST_COINS, nextStats } from '../domain/stats.js';
 
 export type FeedResult = { pet: typeof pets.$inferSelect; spent: { coins: number } };
 
-/** Alimenta o pet gastando moedas. `feedId` vem do aparelho e torna o débito único no razão. */
+/**
+ * Alimenta o pet gastando moedas. Só existe para a operação de sync `pet.feed` de versões antigas
+ * do app: hoje o pato come os itens da mochila (`POST /inventory/use`). `feedId` torna o débito único.
+ */
 export async function feedPet(tx: Transaction, input: { userId: string; feedId: string }): Promise<FeedResult> {
   const { userId, feedId } = input;
   // O saldo é lido e alterado aqui: serializa com compras e estornos do mesmo usuário.
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${userId}))`);
   const pet = await tx.query.pets.findFirst({ where: eq(pets.userId, userId) });
   if (!pet) throw new AppError(409, 'PET_REQUIRED', 'Crie um pet antes de alimentá-lo.');
+
+  const repeated = await tx.query.rewardLedger.findFirst({
+    where: and(eq(rewardLedger.userId, userId), eq(rewardLedger.sourceType, 'pet_feed'), eq(rewardLedger.sourceId, feedId)),
+  });
+  if (repeated) return { pet, spent: { coins: -repeated.coinDelta } };
 
   const [balanceRow] = await tx.select({ balance: sql<string>`coalesce(sum(${rewardLedger.coinDelta}), 0)` })
     .from(rewardLedger).where(eq(rewardLedger.userId, userId));

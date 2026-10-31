@@ -18,12 +18,12 @@ describe('isFullPomodoro', () => {
 });
 
 describe('focusRewards', () => {
-  it('mantém 20 XP e 4 moedas no ciclo clássico', () => {
-    expect(focusRewards(25 * 60)).toEqual({ xp: 20, coins: 4 });
+  it('mantém 20 XP e 5 moedas no ciclo clássico', () => {
+    expect(focusRewards(25 * 60)).toEqual({ xp: 20, coins: 5 });
   });
 
   it('escala com a duração dos ciclos curto e longo', () => {
-    expect(focusRewards(15 * 60)).toEqual({ xp: 12, coins: 2 });
-    expect(focusRewards(50 * 60)).toEqual({ xp: 40, coins: 8 });
+    expect(focusRewards(15 * 60)).toEqual({ xp: 12, coins: 3 });
+    expect(focusRewards(50 * 60)).toEqual({ xp: 40, coins: 10 });
   });
 });

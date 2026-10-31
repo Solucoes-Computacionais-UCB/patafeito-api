@@ -1,0 +1,1 @@
+ALTER TABLE "pets" ADD COLUMN "last_pampered_at" timestamp with time zone;

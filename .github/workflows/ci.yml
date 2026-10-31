@@ -38,7 +38,8 @@ jobs:
       - run: npm run build
       - run: npm run db:migrate:prod
       # Os testes de integração truncam o mesmo banco: rodar os arquivos em série.
-      - run: npm test -- --no-file-parallelism
+      # A cobertura de domínio e serviços precisa ficar em 80% ou mais (RNF011).
+      - run: npm run test:coverage
 
   deploy:
     needs: test
