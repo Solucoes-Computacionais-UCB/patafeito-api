@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../../../db/client.js';
 import { inventory } from '../../../db/schema/inventory.js';
+import { pets } from '../../../db/schema/pets.js';
 import { idempotencyOperations } from '../../../db/schema/idempotency-operations.js';
 import { rewardLedger } from '../../../db/schema/reward-ledger.js';
 import { shopItems } from '../../../db/schema/shop-items.js';
@@ -35,6 +36,9 @@ shopRouter.post('/purchases', async (req: AuthenticatedRequest, res) => {
     }
     const item = await tx.query.shopItems.findFirst({ where: and(eq(shopItems.id, itemId), eq(shopItems.active, true)) });
     if (!item) throw new AppError(404, 'SHOP_ITEM_NOT_FOUND', 'Item da loja não encontrado.');
+    // RN12: itens com nível mínimo ficam bloqueados até o pet chegar lá.
+    const pet = await tx.query.pets.findFirst({ columns: { level: true }, where: eq(pets.userId, userId) });
+    if ((pet?.level ?? 1) < item.minLevel) throw new AppError(409, 'ITEM_LOCKED', `Este item desbloqueia no nível ${item.minLevel}.`);
     const owned = await tx.query.inventory.findFirst({ where: and(eq(inventory.userId, userId), eq(inventory.itemId, itemId)) });
     if (owned && !item.consumable) throw new AppError(409, 'ITEM_ALREADY_OWNED', 'Este item já pertence ao inventário.');
     const [balanceRow] = await tx.select({ balance: sql<string>`coalesce(sum(${rewardLedger.coinDelta}), 0)` }).from(rewardLedger).where(eq(rewardLedger.userId, userId));

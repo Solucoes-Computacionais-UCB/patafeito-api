@@ -7,11 +7,13 @@ import { env } from '../../../config/env.js';
 import { db } from '../../../db/client.js';
 import { users } from '../../../db/schema/users.js';
 import { refreshTokens } from '../../../db/schema/refresh-tokens.js';
+import { safeText } from '../../../shared/validation/sanitize.js';
 import { AppError } from '../../../shared/errors/app-error.js';
+import { availableHandle } from '../../social/application/presence.js';
 
 export const identityRouter = Router();
 const credentials = z.object({ email: z.string().email(), password: z.string().min(8).max(128) });
-const registerInput = credentials.extend({ displayName: z.string().trim().min(2).max(80) });
+const registerInput = credentials.extend({ displayName: safeText(2, 80) });
 const refreshTokenLifetimeMs = 30 * 24 * 60 * 60 * 1000;
 type DatabaseExecutor = Pick<typeof db, 'insert'>;
 
@@ -31,7 +33,10 @@ identityRouter.post('/register', async (req, res) => {
   const input = registerInput.parse(req.body);
   const existing = await db.query.users.findFirst({ where: eq(users.email, input.email) });
   if (existing) throw new AppError(409, 'EMAIL_IN_USE', 'Este e-mail já está em uso.');
-  const [user] = await db.insert(users).values({ email: input.email, displayName: input.displayName, passwordHash: await argon2.hash(input.password, { type: argon2.argon2id }) }).returning({ id: users.id, email: users.email, displayName: users.displayName });
+  const [user] = await db.insert(users).values({
+    email: input.email, displayName: input.displayName, handle: await availableHandle(input.displayName),
+    passwordHash: await argon2.hash(input.password, { type: argon2.argon2id }),
+  }).returning({ id: users.id, email: users.email, displayName: users.displayName, handle: users.handle });
   res.status(201).json({ data: { user, tokens: await issueTokens(user.id) } });
 });
 
@@ -39,7 +44,7 @@ identityRouter.post('/login', async (req, res) => {
   const input = credentials.parse(req.body);
   const user = await db.query.users.findFirst({ where: eq(users.email, input.email) });
   if (!user || !(await argon2.verify(user.passwordHash, input.password))) throw new AppError(401, 'INVALID_CREDENTIALS', 'E-mail ou senha inválidos.');
-  res.json({ data: { user: { id: user.id, email: user.email, displayName: user.displayName }, tokens: await issueTokens(user.id) } });
+  res.json({ data: { user: { id: user.id, email: user.email, displayName: user.displayName, handle: user.handle }, tokens: await issueTokens(user.id) } });
 });
 
 identityRouter.post('/refresh', async (req, res) => {

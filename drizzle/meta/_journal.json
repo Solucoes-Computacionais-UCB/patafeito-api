@@ -92,6 +92,55 @@
       "when": 1792795931393,
       "tag": "0012_shop_consumables",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793377111749,
+      "tag": "0013_task_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793377955080,
+      "tag": "0014_pet_mood",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1793378685114,
+      "tag": "0015_focus_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1793379194617,
+      "tag": "0016_notification_dedupe",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793380867379,
+      "tag": "0017_shop_min_level",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793381211523,
+      "tag": "0018_social",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793413137279,
+      "tag": "0019_pet_pamper",
+      "breakpoints": true
     }
   ]
 }

@@ -3,8 +3,12 @@ import type { Difficulty } from '../../rewards/domain/rewards.js';
 export type PetStats = { hunger: number; energy: number; happiness: number; statsUpdatedAt: Date };
 export type StatsBoost = Partial<Record<'hunger' | 'energy' | 'happiness', number>>;
 
-/** Pontos perdidos por hora. A fome zera em ~25h, a energia em ~50h e a felicidade em ~33h. */
-export const DECAY_PER_HOUR = { hunger: 4, energy: 2, happiness: 3 };
+/**
+ * Pontos perdidos por hora. Do cheio, a saciedade e a felicidade zeram em ~50h e a energia em ~67h.
+ * Balanceado para quem cumpre a meta diária (3 tarefas médias + 2 ciclos de foco) manter o pato
+ * com ~17 moedas por dia e ainda sobrar para a loja.
+ */
+export const DECAY_PER_HOUR = { hunger: 2, energy: 1.5, happiness: 2 };
 /** Abaixo deste valor, fome ou energia aceleram a perda de felicidade. */
 export const LOW_STAT_THRESHOLD = 30;
 const LOW_STAT_PENALTY = 1.5;
@@ -12,6 +16,21 @@ const LOW_STAT_PENALTY = 1.5;
 export const FEED_COST_COINS = 5;
 export const FEED_BOOST: StatsBoost = { hunger: 35, happiness: 2 };
 export const FOCUS_BOOST: StatsBoost = { energy: 15, happiness: 3 };
+
+/**
+ * Mimar (Tela 6): tocar no pato. É o único cuidado gratuito: alimentar e curar usam itens da mochila,
+ * comprados na loja, para que as moedas tenham um só destino.
+ */
+export const PAMPER_BOOST: StatsBoost = { happiness: 5 };
+export const PAMPER_COOLDOWN_MS = 3_600_000;
+
+export function canPamper(lastPamperedAt: Date | null, now: Date) {
+  return !lastPamperedAt || now.getTime() - lastPamperedAt.getTime() >= PAMPER_COOLDOWN_MS;
+}
+
+export function nextPamperAt(lastPamperedAt: Date) {
+  return new Date(lastPamperedAt.getTime() + PAMPER_COOLDOWN_MS);
+}
 const taskHappiness: Record<Difficulty, number> = { easy: 5, medium: 8, hard: 12 };
 
 export function taskBoost(difficulty: Difficulty): StatsBoost {

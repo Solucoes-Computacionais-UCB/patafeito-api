@@ -1,8 +1,10 @@
 # Patafeito — Arquitetura do Backend
 
-Documento técnico de arquitetura • versão 1.2 • 27/10/2026
+Documento técnico de arquitetura • versão 1.3 • 30/10/2026
 
-Status: arquitetura-alvo com o núcleo do MVP implementado (fases 1, 2, 3 e 5 concluídas no escopo de código; 0 e 4 parciais — ver seção 10). Os blocos “Situação em 27/10/2026” indicam onde a implementação difere do texto. Base: Roteiro do Projeto de Desenvolvimento de Solução Computacional (43 páginas).
+Status: arquitetura-alvo com o núcleo do MVP implementado (fases 1, 2, 3 e 5 concluídas no escopo de código; 0 e 4 parciais — ver seção 10). Os blocos “Situação em 27/10/2026” indicam onde a implementação difere do texto. Base: Roteiro do Projeto de Desenvolvimento de Solução Computacional (46 páginas).
+
+**Atualização 30/10/2026:** o que falta para cumprir o roteiro está detalhado em [`../../docs/PLANO_IMPLEMENTACAO.md`](../../docs/PLANO_IMPLEMENTACAO.md) (fases 1–9). Ficaram **fora do escopo** por decisão da equipe: anexo de imagem em tarefas, fases de vida do pet, push via FCM e chapéus. O banco **não precisa** reproduzir o modelo ER do roteiro; a correspondência entre o modelo conceitual e as tabelas físicas está na seção 4.
 
 Convenção: \[BASE\] = previsto no roteiro; \[PROPOSTA\] = detalhamento técnico recomendado; \[DECIDIR\] = item em aberto.
 
@@ -83,7 +85,9 @@ Convenção: \[BASE\] = previsto no roteiro; \[PROPOSTA\] = detalhamento técnic
 | Autenticação    | Senhas com Argon2id, access token de curta duração e refresh token rotativo |
 | Testes          | Vitest/Jest + Supertest + PostgreSQL de teste                               |
 | Observabilidade | Logs estruturados, request-id, métricas e health/readiness                  |
-| Push            | Firebase Admin / FCM com credenciais só no servidor                         |
+| Push            | ~~Firebase Admin / FCM~~ — fora do escopo (30/10/2026). Alertas do servidor viram registros em `notifications`, entregues ao app pelo sync; o app agenda notificações locais |
+| Jobs            | `src/jobs/scheduler.ts` com `setInterval` + `pg_try_advisory_lock` (plano, fase 4) |
+| Cobertura       | `@vitest/coverage-v8` com limiar de 80% em domain/application (plano, fase 9) |
 
 ## 3. Módulos e responsabilidades
 
@@ -120,6 +124,23 @@ Convenção: \[BASE\] = previsto no roteiro; \[PROPOSTA\] = detalhamento técnic
 | outbox_events    | id, topic, payload, status, attempts, next_attempt_at                                                         |
 
 **Situação em 27/10/2026:** a recorrência foi implementada com colunas em `tasks` (`recurrence`, `recurrence_day`, `series_id`; cada repetição é uma tarefa própria), no lugar de `task_occurrences`/`recurrence_rules`. O pet usa `energy` em vez de `health`. Também existem `shop_items`, `inventory`, `active_boosts`, `pet_companions`, `notifications`, `idempotency_operations` e `sync_changes`. Ainda não existem `device_tokens` e `outbox_events` (sem push/worker), nem restrições `CHECK` no banco: status, dificuldade e a faixa 0–100 são validados só na aplicação.
+
+**Correspondência roteiro → banco físico (atual + plano 30/10/2026):**
+
+| Roteiro (conceitual) | Implementação |
+|---|---|
+| USUARIO | `users` (+ `handle`, `last_seen_at`, `daily_goal_xp`, `timezone` no plano) |
+| PET / ESPECIE_PET | `pets` (`species_id` = id fixo `pingo`/`mare`/`bento`; as espécies são catálogo no código do app) + `pet_companions` (histórico de espécies) |
+| TAREFA / USUARIO_TAREFA | `tasks` (tarefa é sempre de um usuário; `status`, `completed_at`; plano: `category`, `estimated_minutes`, `kind`) |
+| RECORRENCIA_TAREFA | colunas `recurrence`, `recurrence_day`, `series_id` em `tasks` |
+| SESSAO_POMODORO | `focus_sessions` (plano: `mode`, `task_id`) |
+| REGISTRO_PRODUTIVIDADE | derivado de `reward_ledger` + `tasks` + `focus_sessions` (`GET /stats/overview`, plano) |
+| METAS / USUARIO_META | `users.daily_goal_xp` (meta diária, RN13; plano) |
+| NOTIFICACAO / USUARIO_NOTIFICACAO | `notifications` (por usuário, `read_at`; plano: `dedupe_key`) |
+| AMIZADE | `friendships` (plano, fase 8) |
+| ITEM_COSMETICO / CATEGORIA | `shop_items` (`slot` = categoria; plano: `min_level`) |
+| INVENTARIO | `inventory` + `active_boosts` |
+| — (extra) | `reward_ledger`, `idempotency_operations`, `sync_operations`, `sync_changes`, `refresh_tokens` |
 
 ### 4.1 Integridade e índices
 
@@ -253,6 +274,16 @@ A transação, por si só, não elimina corridas: fazer atualização condiciona
 
 **Situação em 27/10/2026:** implementadas RN01, RN03 (thresholds 100/300/600…), RN04, RN05 (pausa longa configurável no app), RN06 (série com id determinístico por data), RN08 (inclusive reagendamento offline via `task.update` só de prazo) e RN12. RN09 valida 2–15 caracteres por unidade de código, não por grapheme. **Não implementadas:** RN02, RN07 (o escudo protege a sequência, mas não há bônus), RN11/RN13 e RN14 (não há tarefa especial).
 
+**Implementado em 30/10/2026 (fase 2):** RN02, RN08 (zera o contador), RN11 e RN13 em `modules/pets/domain/mood.ts` e `application/pet-state.ts`, com penalidades aplicadas sob demanda e idempotentes. As interações (`POST /pets/me/interactions` e a operação `pet.interact`) estão em `application/interact-pet.ts`.
+
+**Implementado em 30/10/2026 (fase 4):**
+- RN07 (bônus de sequência), em `modules/rewards/{domain,application}/streak.ts`, com lançamento idempotente por usuário e dia.
+- Rotinas em `src/jobs/scheduler.ts`. Rodam a cada 60 s, com `pg_try_advisory_lock`, e só fora de `NODE_ENV=test`. Cobrem prazo próximo, vencidas, inatividade, fome e cansaço, e sequência em risco.
+- Notificações com `dedupe_key` única por usuário.
+- `POST /notifications/read-all` e a operação `notification.read_all`.
+
+**Correção 30/10/2026:** RN12 está só parcial — a compra exige moedas, mas não há desbloqueio por nível. RN05 não tem pausa longa (o app só tem pausa curta). Valores definidos para as pendentes (plano, fases 2–4 e 7): RN02 −5 de felicidade por tarefa vencida e humor triste com 3 vencidas seguidas; RN08 o reagendamento zera o contador; RN07 bônus de +10 XP/+5 moedas no 3º dia e de +30 XP/+15 moedas a cada 7 dias; RN11 −10 de felicidade e humor triste após 24h sem atividade; RN13 meta de 60 XP/dia; RN14 no máximo 5 especiais por semana ISO, sem XP; RN12 `shop_items.min_level`.
+
 ## 6. Contrato HTTP da API v1
 
 \[PROPOSTA\] Rotas planejadas; o que já existe está no bloco de situação abaixo e em `docs/openapi.yaml`. Respostas padronizadas {data} (`meta` ainda não é usado) e erros {error:{code,message,details,requestId}}. Autorização por usuário, paginação cursor-based para históricos.
@@ -267,7 +298,7 @@ A transação, por si só, não elimina corridas: fazer atualização condiciona
 | POST             | /tasks/:id/complete                        | Concluir e premiar       |
 | POST             | /tasks/:id/reschedule                      | Reagendar vencida        |
 | GET              | /pets/me                                   | Estado e espécie         |
-| POST             | /pets/me/interactions                      | Alimentar/brincar/curar  |
+| POST             | /pets/me/interactions                      | Mimar (grátis, 1×/hora)  |
 | POST             | /focus-sessions                            | Registrar início         |
 | POST             | /focus-sessions/:id/finish                 | Concluir foco            |
 | GET              | /rewards/ledger                            | Extrato de moedas e XP   |
@@ -275,7 +306,10 @@ A transação, por si só, não elimina corridas: fazer atualização condiciona
 | GET/PATCH        | /inventory                                 | Listar/equipar           |
 | GET              | /stats/overview                            | Indicadores              |
 | GET/POST         | /friends                                   | Relações sociais         |
-| POST             | /devices                                   | Registrar push token     |
+| ~~POST~~         | ~~/devices~~                               | Fora do escopo (sem FCM) |
+| GET              | /tasks?q=&status=&category=                | Busca e filtro (plano)   |
+| POST             | /notifications/read-all                    | Marcar todas (plano)     |
+| GET              | /users/search, /users/:id/profile, /ranking | Social (plano)          |
 | POST             | /sync/push                                 | Enviar mutações offline  |
 | GET              | /sync/pull?cursor=                         | Receber mudanças         |
 
@@ -354,7 +388,7 @@ Meta de cobertura de domínio/serviços de pelo menos 80% está no RNF011. Aceit
 
 - Fase 2 — tarefas, pet, regras XP, ledger, transações e testes. **Concluída para o escopo definido:** CRUD de tarefas, RN01, ledger, transação de conclusão, idempotência persistida, progressão de nível e testes unitários/integração.
 
-- Fase 3 — sessões de foco, loja, inventário, notificações. **Concluída para o escopo de MVP:** sessões de foco de 5 a 120 minutos (padrão 25) têm recompensa idempotente de 20 XP e 4 moedas a cada 25 minutos; tarefas rendem 1/2/3 moedas por dificuldade; catálogo cosmético, compra transacional e inventário/equipamento estão implementados; notificações de conclusão são persistidas e o app controla seu estado de lida/não lida. Não há push nem worker no backend.
+- Fase 3 — sessões de foco, loja, inventário, notificações. **Concluída para o escopo de MVP:** sessões de foco de 5 a 120 minutos (padrão 25) têm recompensa idempotente de 20 XP e 5 moedas a cada 25 minutos; tarefas rendem 2/3/5 moedas por dificuldade (rebalanceado em 30/10/2026); catálogo cosmético, compra transacional e inventário/equipamento estão implementados; notificações de conclusão são persistidas e o app controla seu estado de lida/não lida. Não há push nem worker no backend.
 
 - Fase 4 — sincronização offline e recuperação; ranking/social apenas após fluxo central estável. **Parcial:** `sync/push` e `sync/pull` oferecem snapshot inicial, cursor por usuário, idempotência de operação, conflitos por versão e tombstones para tarefas; notificações também sincronizam o estado de leitura. Uma tarefa vencida aceita `task.update` apenas para reagendar. No app, a fila SQLite e o retry/backoff estão implementados; a UI de resolução de conflitos, não.
 
@@ -364,11 +398,13 @@ Meta de cobertura de domínio/serviços de pelo menos 80% está no RNF011. Aceit
 
 - Como separar XP total, XP do pet e moedas gastáveis? O documento mistura custo em XP e moedas virtuais.
 
-  - Implementação atual: `xp_total` é o XP acumulado do pet; moedas são apuradas pelo `reward_ledger`. Tarefas rendem 1/2/3 e cada ciclo de 25 minutos de foco rende 4 moedas (ciclos de 5 a 120 minutos rendem proporcionalmente); compras inserem débitos no ledger. O nível usa thresholds incrementais: nível 2 com 100 XP, nível 3 com 300 XP, nível 4 com 600 XP.
+  - Implementação atual: `xp_total` é o XP acumulado do pet; moedas são apuradas pelo `reward_ledger`. Tarefas rendem 2/3/5 e cada ciclo de 25 minutos de foco rende 5 moedas (ciclos de 5 a 120 minutos rendem proporcionalmente); compras inserem débitos no ledger. O nível usa thresholds incrementais: nível 2 com 100 XP, nível 3 com 300 XP, nível 4 com 600 XP.
 
 - Quais valores exatos de bônus de streak, penalidades, recuperação e thresholds de nível? O MVP fixa a sessão Pomodoro integral em 25 minutos e 20 XP, sujeito à revisão de produto.
 
-- Sync em nuvem faz parte do MVP? Roteiro apresenta instruções conflitantes.
+- Sync em nuvem faz parte do MVP? Roteiro apresenta instruções conflitantes. **Decidido (30/10/2026):** sim, a operação offline com sincronização faz parte do escopo, e o roteiro será corrigido.
+- **Decidido (30/10/2026):** a exclusão de conta é definitiva, sem soft delete (LGPD). O roteiro será ajustado.
+- **Decidido (30/10/2026):** o ranking é só entre amigos e nenhuma rota expõe o e-mail.
 
 - Onde hospedar API e PostgreSQL? Qual orçamento, SLA e política de backup?
 

@@ -6,10 +6,14 @@ import { focusSessions } from '../../../db/schema/focus-sessions.js';
 import { idempotencyOperations } from '../../../db/schema/idempotency-operations.js';
 import { requireAuth, type AuthenticatedRequest } from '../../../shared/auth/middleware.js';
 import { AppError } from '../../../shared/errors/app-error.js';
-import { finishFocusSession, MAX_FOCUS_SECONDS, MIN_FOCUS_SECONDS, POMODORO_DURATION_SECONDS, type FocusCompletionResult } from '../application/complete-focus-session.js';
+import { finishFocusSession, FOCUS_MODES, MAX_FOCUS_SECONDS, MIN_FOCUS_SECONDS, ownedTaskId, POMODORO_DURATION_SECONDS, type FocusCompletionResult } from '../application/complete-focus-session.js';
 
 const idempotencyKey = z.string().uuid();
-const startInput = z.object({ durationSeconds: z.number().int().min(MIN_FOCUS_SECONDS).max(MAX_FOCUS_SECONDS).default(POMODORO_DURATION_SECONDS) });
+const startInput = z.object({
+  durationSeconds: z.number().int().min(MIN_FOCUS_SECONDS).max(MAX_FOCUS_SECONDS).default(POMODORO_DURATION_SECONDS),
+  mode: z.enum(FOCUS_MODES).default('pomodoro'),
+  taskId: z.string().uuid().nullable().optional(),
+});
 
 function sessionIdParam(value: unknown) {
   return z.string().uuid().parse(value);
@@ -19,11 +23,16 @@ export const focusRouter = Router();
 focusRouter.use(requireAuth);
 
 focusRouter.post('/', async (req: AuthenticatedRequest, res) => {
-  const { durationSeconds } = startInput.parse(req.body ?? {});
-  const [session] = await db.insert(focusSessions).values({
-    userId: req.userId!,
-    durationSeconds,
-  }).returning();
+  const input = startInput.parse(req.body ?? {});
+  const session = await db.transaction(async (tx) => {
+    const [created] = await tx.insert(focusSessions).values({
+      userId: req.userId!,
+      durationSeconds: input.durationSeconds,
+      mode: input.mode,
+      taskId: await ownedTaskId(tx, req.userId!, input.taskId),
+    }).returning();
+    return created;
+  });
   res.status(201).json({ data: session });
 });
 

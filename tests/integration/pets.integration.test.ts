@@ -18,6 +18,10 @@ describe('pet companions integration', () => {
     process.env.JWT_ACCESS_SECRET = 'test-access-secret-that-is-at-least-32-characters-long';
     process.env.JWT_REFRESH_SECRET = 'test-refresh-secret-that-is-at-least-32-characters-long';
     process.env.CORS_ORIGIN = 'http://localhost:8081';
+    // Os testes fazem centenas de requisições do mesmo IP em segundos: o limite de produção não vale aqui.
+    process.env.RATE_LIMIT_MAX = '100000';
+    process.env.AUTH_RATE_LIMIT_MAX = '100000';
+    process.env.SYNC_RATE_LIMIT_MAX = '100000';
     const { app } = await import('../../src/app.js');
     server = createServer(app);
     await new Promise<void>((resolve) => server.listen(0, resolve));

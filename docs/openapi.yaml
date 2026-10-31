@@ -22,31 +22,57 @@ paths:
   /auth/logout:
     post: { summary: Revoga o refresh token fornecido, responses: { '204': { description: Sessão encerrada } } }
   /me:
-    get: { summary: Retorna a conta autenticada, security: [{ bearerAuth: [] }], responses: { '200': { description: 'Usuário { id, email, displayName }' } } }
+    get: { summary: Retorna a conta autenticada, security: [{ bearerAuth: [] }], responses: { '200': { description: 'Usuário { id, email, displayName, handle }' } } }
     delete: { summary: 'Exclui a conta e todos os dados do usuário de forma definitiva ({ currentPassword }); o e-mail fica livre', security: [{ bearerAuth: [] }], responses: { '204': { description: Conta excluída }, '403': { description: Senha atual incorreta } } }
-    patch: { summary: 'Atualiza displayName e/ou email. Trocar o email exige currentPassword', security: [{ bearerAuth: [] }], responses: { '200': { description: Usuário atualizado }, '403': { description: Senha atual incorreta }, '409': { description: E-mail em uso } } }
+    patch: { summary: 'Atualiza displayName, email e/ou handle (@usuário, 3 a 20 de a-z, 0-9, _). Trocar o email exige currentPassword', security: [{ bearerAuth: [] }], responses: { '200': { description: Usuário atualizado }, '403': { description: Senha atual incorreta }, '409': { description: EMAIL_IN_USE ou HANDLE_IN_USE } } }
   /me/password:
     post: { summary: 'Troca a senha ({ currentPassword, newPassword }), revoga as outras sessões e devolve tokens novos', security: [{ bearerAuth: [] }], responses: { '200': { description: Tokens novos }, '403': { description: Senha atual incorreta } } }
   /me/reset-progress:
     post: { summary: 'Zera XP, nível, moedas, inventário, ciclos de foco, notificações e tarefas concluídas; mantém o pet e as tarefas pendentes. Exige currentPassword', security: [{ bearerAuth: [] }], responses: { '200': { description: Pet zerado }, '403': { description: Senha atual incorreta } } }
   /pets/me:
-    get: { summary: 'Retorna o pet autenticado, com fome, energia e felicidade já decaídas até agora', security: [{ bearerAuth: [] }], responses: { '200': { description: Pet } } }
+    get: { summary: 'Retorna o pet autenticado, com saciedade, energia e felicidade já decaídas até agora. Antes, aplica penalidades pendentes: −5 de felicidade por tarefa vencida (RN02) e −10 a cada 24h sem atividade (RN11). Inclui overdueStreak, lastActivityAt, mood (happy | neutral | sad | down), dailyGoal { targetXp, earnedXp } (RN13) e streak (dias seguidos, RN07)', security: [{ bearerAuth: [] }], responses: { '200': { description: Pet } } }
     post: { summary: Cria o pet inicial, security: [{ bearerAuth: [] }], responses: { '201': { description: Pet criado } } }
     patch: { summary: 'Troca o apelido do pet ({ name }, 2 a 15 caracteres)', security: [{ bearerAuth: [] }], responses: { '200': { description: Pet renomeado } } }
+  /pets/me/interactions:
+    post:
+      summary: 'Mimar ({ type: pamper }): carinho gratuito, +5 de felicidade, conta no máximo uma vez por hora. Toques dentro da hora devolvem counted: false, sem erro. Alimentar e curar usam itens da mochila (POST /inventory/use)'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [type], properties: { type: { type: string, enum: [pamper] } } }
+      responses:
+        '200': { description: '{ pet, counted, nextAt }' }
+        '409': { description: PET_REQUIRED }
+        '422': { description: Tipo inválido (brincar, curar e alimentar pagos foram removidos) }
   /pets/me/switch:
     post: { summary: 'Troca a espécie ({ speciesId, name }); XP, nível e status continuam e o período anterior vai para o histórico', security: [{ bearerAuth: [] }], responses: { '200': { description: Pet trocado }, '409': { description: Já é a espécie atual } } }
   /pets/me/history:
     get: { summary: 'Períodos com cada espécie ({ speciesId, name, startedAt, endedAt }), do mais antigo ao atual', security: [{ bearerAuth: [] }], responses: { '200': { description: Histórico } } }
   /tasks:
-    get: { summary: Lista tarefas, security: [{ bearerAuth: [] }], responses: { '200': { description: Tarefas } } }
-    post: { summary: Cria tarefa, security: [{ bearerAuth: [] }], responses: { '201': { description: Tarefa criada } } }
+    get:
+      summary: Lista tarefas, com busca e filtros opcionais
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: q, in: query, description: Trecho do título (sem diferenciar maiúsculas), schema: { type: string, maxLength: 100 } }
+        - { name: status, in: query, description: 'pending (no prazo), overdue (vencida) ou completed', schema: { type: string, enum: [pending, completed, overdue] } }
+        - { name: category, in: query, schema: { type: string, enum: [personal, work, study, health, career] } }
+      responses: { '200': { description: Tarefas } }
+    post:
+      summary: 'Cria tarefa. Campos: title, description, difficulty (obrigatório), category, estimatedMinutes (1–600), kind (normal | special), dueAt, recurrence, recurrenceDay, seriesId. Título e descrição são sanitizados'
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Tarefa criada }
+        '409': { description: 'SPECIAL_LIMIT_REACHED: já há 5 tarefas especiais criadas nesta semana (segunda a domingo, horário de Brasília)' }
+        '422': { description: Dados inválidos, inclusive tarefa especial recorrente }
   /tasks/{id}:
     parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
     get: { summary: Obtém tarefa, security: [{ bearerAuth: [] }], responses: { '200': { description: Tarefa } } }
     patch: { summary: Atualiza tarefa pendente, security: [{ bearerAuth: [] }], responses: { '200': { description: Tarefa atualizada } } }
     delete: { summary: Exclui tarefa, security: [{ bearerAuth: [] }], responses: { '204': { description: Tarefa excluída } } }
   /tasks/{id}/reschedule:
-    post: { summary: Reagenda tarefa pendente, security: [{ bearerAuth: [] }], responses: { '200': { description: Tarefa reagendada } } }
+    post: { summary: 'Reagenda tarefa pendente. Se ela estava vencida, zera o contador de vencidas do pet (RN08)', security: [{ bearerAuth: [] }], responses: { '200': { description: Tarefa reagendada } } }
   /tasks/{id}/complete:
     post:
       summary: Conclui tarefa e concede XP atomicamente
@@ -61,7 +87,7 @@ paths:
           application/json:
             schema: { type: object, properties: { completedAt: { type: string, format: date-time } } }
       responses:
-        '200': { description: Reenvios com a mesma chave retornam a mesma resposta }
+        '200': { description: 'Reenvios com a mesma chave retornam a mesma resposta. Tarefa especial: rewards = { xp: 0, coins: 0, rareInteraction: true }. Quando a conclusão fecha 3 dias seguidos, ou 7 e cada múltiplo de 7, rewards.streakBonus = { days, xp, coins } (RN07, no máximo uma vez por dia)' }
         '409': { description: Tarefa não pendente ou chave reutilizada }
   /tasks/{id}/reopen:
     parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
@@ -73,7 +99,7 @@ paths:
         '409': { description: 'Tarefa não concluída ou moedas já gastas' }
   /focus-sessions:
     post:
-      summary: 'Inicia uma sessão Pomodoro. Corpo opcional { durationSeconds } entre 300 e 7200; padrão 1500 (25 minutos)'
+      summary: 'Inicia uma sessão de foco. Corpo opcional { durationSeconds (300 a 7200, padrão 1500), mode (pomodoro | deep_work | sprint | custom, padrão pomodoro), taskId }. Um taskId que não é da conta é ignorado'
       security: [{ bearerAuth: [] }]
       responses: { '201': { description: Sessão iniciada } }
   /focus-sessions/{id}/finish:
@@ -91,12 +117,12 @@ paths:
         '409': { description: Sessão incompleta, finalizada ou chave reutilizada }
   /shop/items:
     get:
-      summary: Lista os itens ativos da loja
+      summary: 'Lista os itens ativos da loja, cada um com minLevel (nível do pet para poder comprar, RN12)'
       security: [{ bearerAuth: [] }]
       responses: { '200': { description: Catálogo de itens } }
   /shop/purchases:
     post:
-      summary: Compra um item usando moedas
+      summary: 'Compra um item usando moedas. Responde 409 ITEM_LOCKED se o pet estiver abaixo do minLevel do item (RN12)'
       security: [{ bearerAuth: [] }]
       parameters:
         - name: Idempotency-Key
@@ -147,11 +173,65 @@ paths:
       summary: Saldo de moedas e XP acumulado pelo usuário autenticado
       security: [{ bearerAuth: [] }]
       responses: { '200': { description: 'Objeto com coins e xpTotal' } }
+  /stats/overview:
+    get:
+      summary: 'Produtividade por dia local do usuário (padrão: últimos 30 dias, máximo 366): daily [{ date, tasks, xp, focusMinutes }], totals { tasksCompleted, focusMinutes, xp, activeDays, streak, xpTotal, level } e byCategory'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: Resumo do período }
+        '422': { description: Período inválido ou longo demais }
+  /friends:
+    get: { summary: 'Amigos aceitos: id, displayName, handle, pet { speciesId, name, level }, online (atividade nos últimos 5 min), streak, xpTotal e periodXp (XP da semana). Nunca inclui e-mail', security: [{ bearerAuth: [] }], responses: { '200': { description: Amigos } } }
+  /friends/requests:
+    get: { summary: 'Pedidos pendentes: { incoming, outgoing }, cada um com { id, createdAt, user }', security: [{ bearerAuth: [] }], responses: { '200': { description: Pedidos } } }
+    post:
+      summary: 'Pede amizade pelo @usuário ({ handle }). Se a outra pessoa já tinha pedido, aceita direto'
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Pedido criado ou amizade aceita }
+        '404': { description: USER_NOT_FOUND }
+        '409': { description: ALREADY_FRIENDS ou REQUEST_PENDING }
+        '422': { description: CANNOT_ADD_SELF ou @usuário inválido }
+  /friends/requests/{id}/accept:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    post: { summary: Aceita um pedido recebido, security: [{ bearerAuth: [] }], responses: { '200': { description: Amizade aceita }, '404': { description: Pedido inexistente ou de outra pessoa } } }
+  /friends/requests/{id}/decline:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    post: { summary: Recusa um pedido recebido, security: [{ bearerAuth: [] }], responses: { '200': { description: Pedido recusado } } }
+  /friends/{userId}:
+    parameters: [{ name: userId, in: path, required: true, schema: { type: string, format: uuid } }]
+    delete: { summary: Desfaz a amizade (ou cancela o pedido), security: [{ bearerAuth: [] }], responses: { '204': { description: Removida } } }
+  /friends/{userId}/cheer:
+    parameters: [{ name: userId, in: path, required: true, schema: { type: string, format: uuid } }]
+    post: { summary: 'Incentiva um amigo: cria a notificação friend_cheer para ele, no máximo uma por dia', security: [{ bearerAuth: [] }], responses: { '201': { description: Enviado }, '403': { description: NOT_FRIENDS }, '409': { description: CHEER_ALREADY_SENT } } }
+  /users/search:
+    get:
+      summary: 'Busca pessoas pelo início do @usuário (mínimo 3 caracteres, até 20 resultados), com relation: none | friend | outgoing | incoming'
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: q, in: query, required: true, schema: { type: string, minLength: 3, maxLength: 20 } }]
+      responses: { '200': { description: Resultados } }
+  /users/{id}/profile:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    get: { summary: 'Perfil de outra pessoa. Amigo (ou você): resumo completo. Sem amizade: só displayName, handle e pet', security: [{ bearerAuth: [] }], responses: { '200': { description: Perfil }, '404': { description: Não encontrada } } }
+  /ranking:
+    get:
+      summary: 'Ranking entre você e seus amigos por XP do período. Não existe ranking público'
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: period, in: query, schema: { type: string, enum: [week, month], default: week } }]
+      responses: { '200': { description: '{ period, entries: [{ position, me, ...resumo }] }' } }
   /notifications:
     get:
-      summary: Lista as notificações do usuário autenticado
+      summary: 'Lista as notificações do usuário autenticado. Além das de conclusão, o servidor gera, a cada minuto: task_due_soon (vence em até 1 h), task_overdue, pet_lonely (24 h sem atividade), pet_hungry / pet_tired (no máximo a cada 6 h), streak_risk (20 h locais) e streak_bonus. Elas chegam ao app pelo /sync/pull'
       security: [{ bearerAuth: [] }]
       responses: { '200': { description: Notificações } }
+  /notifications/read-all:
+    post:
+      summary: 'Marca todas as notificações não lidas como lidas'
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: '{ updated }: quantas foram marcadas' } }
   /notifications/{id}:
     parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
     patch:
@@ -185,12 +265,12 @@ paths:
                       opId: { type: string, format: uuid, description: 'Chave de idempotência da operação' }
                       type:
                         type: string
-                        enum: [task.create, task.update, task.delete, task.complete, task.reopen, notification.read, inventory.equip, focus.complete, pet.feed]
-                      resourceId: { type: string, format: uuid, description: 'Obrigatório exceto em task.create, onde é opcional e adota o id gerado pelo aparelho; em focus.complete e pet.feed é sempre o id gerado pelo aparelho' }
+                        enum: [task.create, task.update, task.delete, task.complete, task.reopen, notification.read, inventory.equip, focus.complete, pet.feed, pet.interact, notification.read_all]
+                      resourceId: { type: string, format: uuid, description: 'Obrigatório exceto em notification.read_all (sem id) e em task.create, onde é opcional e adota o id gerado pelo aparelho; em focus.complete, pet.feed e pet.interact é sempre o id gerado pelo aparelho' }
                       baseVersion: { type: integer, minimum: 1, description: 'Obrigatório em task.update' }
                       payload:
                         type: object
-                        description: 'task.complete aceita completedAt; focus.complete exige startedAt e finishedAt e aceita durationSeconds (300 a 7200, padrão 1500); o período precisa cobrir a duração e a recompensa é proporcional (20 XP e 4 moedas a cada 25 minutos); pet.feed não tem payload e custa 5 moedas; em tarefa vencida, task.update só é aceito se mudar apenas dueAt para o futuro'
+                        description: 'task.complete aceita completedAt; focus.complete exige startedAt e finishedAt e aceita durationSeconds (300 a 7200, padrão 1500), mode e taskId; o período precisa cobrir a duração e a recompensa é proporcional (20 XP e 5 moedas a cada 25 minutos); pet.feed não tem payload e custa 5 moedas; pet.interact recebe { type: pamper } (carinho gratuito, uma vez por hora); outros tipos voltam rejected com INTERACTION_REMOVED; em tarefa vencida, task.update só é aceito se mudar apenas dueAt para o futuro'
       responses:
         '200': { description: 'Resultado individual por operação, com status applied, duplicate, conflict ou rejected' }
   /sync/pull:

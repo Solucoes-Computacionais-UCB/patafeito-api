@@ -7,7 +7,7 @@ const hoursLater = (hours: number) => new Date(start.getTime() + hours * 3_600_0
 
 describe('decayStats', () => {
   it('perde pontos proporcionais às horas decorridas', () => {
-    expect(decayStats(full, hoursLater(5))).toEqual({ hunger: 80, energy: 90, happiness: 85, statsUpdatedAt: hoursLater(5) });
+    expect(decayStats(full, hoursLater(5))).toEqual({ hunger: 90, energy: 93, happiness: 90, statsUpdatedAt: hoursLater(5) });
   });
 
   it('não altera nada quando o relógio não avançou', () => {
@@ -21,8 +21,8 @@ describe('decayStats', () => {
 
   it('acelera a perda de felicidade quando a fome está baixa', () => {
     const hungry = { ...full, hunger: 20 };
-    expect(decayStats(hungry, hoursLater(2)).happiness).toBe(91);
-    expect(decayStats(full, hoursLater(2)).happiness).toBe(94);
+    expect(decayStats(hungry, hoursLater(2)).happiness).toBe(94);
+    expect(decayStats(full, hoursLater(2)).happiness).toBe(96);
   });
 });
 
@@ -38,6 +38,6 @@ describe('applyBoost', () => {
 
 describe('nextStats', () => {
   it('decai até agora antes de aplicar o bônus e avança o relógio', () => {
-    expect(nextStats(full, hoursLater(10), { hunger: 35 })).toEqual({ hunger: 95, energy: 80, happiness: 70, statsUpdatedAt: hoursLater(10) });
+    expect(nextStats(full, hoursLater(10), { hunger: 35 })).toEqual({ hunger: 100, energy: 85, happiness: 80, statsUpdatedAt: hoursLater(10) });
   });
 });

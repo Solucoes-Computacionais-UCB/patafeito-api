@@ -8,7 +8,7 @@ describe('taskXp', () => {
 });
 
 describe('taskCoins', () => {
-  it.each([['easy', 1], ['medium', 2], ['hard', 3]] as const)('%s concede %i moeda(s)', (difficulty, coins) => {
+  it.each([['easy', 2], ['medium', 3], ['hard', 5]] as const)('%s concede %i moeda(s)', (difficulty, coins) => {
     expect(taskCoins(difficulty)).toBe(coins);
   });
 });

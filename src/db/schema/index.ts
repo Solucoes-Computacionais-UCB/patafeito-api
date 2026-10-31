@@ -11,3 +11,4 @@ export * from './notifications.js';
 export * from './sync.js';
 export * from './pet-companions.js';
 export * from './active-boosts.js';
+export * from './friendships.js';

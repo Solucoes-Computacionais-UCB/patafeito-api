@@ -15,11 +15,14 @@ async function request(path: string, init?: RequestInit) {
 }
 
 /** Usuário com pet e moedas creditadas direto no razão. */
-async function shopper(coins: number) {
+/** `level` alto por padrão: os testes de compra não dependem do bloqueio por nível (RN12). */
+async function shopper(coins: number, level = 6) {
   const registration = await request('/api/v1/auth/register', { method: 'POST', body: JSON.stringify({ email: `buyer-${crypto.randomUUID()}@example.test`, password: 'valid-password-123', displayName: 'Buyer' }) });
   const authorization = { authorization: `Bearer ${registration.body.data.tokens.accessToken as string}` };
   await pool.query('INSERT INTO reward_ledger (user_id, source_type, source_id, xp_delta, coin_delta) VALUES ($1, $2, $3, 0, $4)', [registration.body.data.user.id, 'test_credit', crypto.randomUUID(), coins]);
   await request('/api/v1/pets/me', { method: 'POST', headers: authorization, body: JSON.stringify({ speciesId: 'pingo', name: 'Pingo' }) });
+  const xpForLevel = [0, 0, 100, 300, 600, 1000, 1500][level];
+  await pool.query('UPDATE pets SET xp_total = $2, level = $3 WHERE user_id = $1', [registration.body.data.user.id, xpForLevel, level]);
   const catalog = (await request('/api/v1/shop/items', { headers: authorization })).body.data as CatalogItem[];
   const item = (sku: string) => catalog.find((entry) => entry.sku === sku)!;
   const buy = (sku: string) => request('/api/v1/shop/purchases', { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() }, body: JSON.stringify({ itemId: item(sku).id }) });
@@ -34,6 +37,10 @@ describe('shop integration', () => {
     process.env.JWT_ACCESS_SECRET = 'test-access-secret-that-is-at-least-32-characters-long';
     process.env.JWT_REFRESH_SECRET = 'test-refresh-secret-that-is-at-least-32-characters-long';
     process.env.CORS_ORIGIN = 'http://localhost:8081';
+    // Os testes fazem centenas de requisições do mesmo IP em segundos: o limite de produção não vale aqui.
+    process.env.RATE_LIMIT_MAX = '100000';
+    process.env.AUTH_RATE_LIMIT_MAX = '100000';
+    process.env.SYNC_RATE_LIMIT_MAX = '100000';
     const { Pool } = await import('pg');
     pool = new Pool({ connectionString: testDatabaseUrl });
     const { app } = await import('../../src/app.js');
@@ -82,7 +89,7 @@ describe('shop integration', () => {
 
     const task = await request('/api/v1/tasks', { method: 'POST', headers: authorization, body: JSON.stringify({ title: 'Com bônus', difficulty: 'hard' }) });
     const completed = await request(`/api/v1/tasks/${task.body.data.id as string}/complete`, { method: 'POST', headers: { ...authorization, 'idempotency-key': crypto.randomUUID() }, body: '{}' });
-    expect(completed.body.data.rewards).toEqual({ xp: 80, coins: 6 });
+    expect(completed.body.data.rewards).toEqual({ xp: 80, coins: 10 });
 
     const boosts = (await request('/api/v1/inventory/boosts', { headers: authorization })).body.data as { active: { effect: string }[] };
     expect(boosts.active.map((boost) => boost.effect).sort()).toEqual(['double_coins', 'double_xp']);
@@ -96,8 +103,8 @@ describe('shop integration', () => {
       opId: crypto.randomUUID(), type: 'focus.complete', resourceId: crypto.randomUUID(),
       payload: { startedAt: new Date(Date.now() - 26 * 60_000).toISOString(), finishedAt: new Date().toISOString() },
     }] }) });
-    expect((await focus()).body.data.results[0].data.rewards).toEqual({ xp: 40, coins: 8 });
-    expect((await focus()).body.data.results[0].data.rewards).toEqual({ xp: 20, coins: 4 });
+    expect((await focus()).body.data.results[0].data.rewards).toEqual({ xp: 40, coins: 10 });
+    expect((await focus()).body.data.results[0].data.rewards).toEqual({ xp: 20, coins: 5 });
   });
 
   integrationTest('escudo protege o dia de hoje uma única vez', async () => {
@@ -111,6 +118,16 @@ describe('shop integration', () => {
     expect((await use('power-streak-shield', { localDate: today })).response.status).toBe(409);
     const boosts = (await request('/api/v1/inventory/boosts', { headers: authorization })).body.data as { protectedDates: string[] };
     expect(boosts.protectedDates).toEqual([today]);
+  });
+
+  integrationTest('bloqueia itens acima do nível do pet (RN12)', async () => {
+    const { item, buy } = await shopper(100, 2);
+    expect(item('scene-noite').minLevel).toBe(5);
+    const locked = await buy('scene-noite');
+    expect(locked.response.status).toBe(409);
+    expect(locked.body.error.code).toBe('ITEM_LOCKED');
+    expect((await buy('scene-lago')).response.status).toBe(201);
+    expect((await buy('power-lucky-clover')).response.status).toBe(201);
   });
 
   integrationTest('cenário é comprado uma vez, equipado e tirado', async () => {
